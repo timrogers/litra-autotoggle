@@ -145,7 +145,7 @@ async fn handle_autotoggle_command(serial_number: Option<&str>, verbose: bool) -
 }
 
 #[cfg(target_os = "linux")]
-async fn handle_autotoggle_command(serial_number: Option<&str>, _verbose: bool) -> CliResult {
+fn handle_autotoggle_command(serial_number: Option<&str>, _verbose: bool) -> CliResult {
     let context = Litra::new()?;
     let device_handle = get_first_supported_device(&context, serial_number)?;
 
@@ -194,11 +194,26 @@ async fn handle_autotoggle_command(serial_number: Option<&str>, _verbose: bool) 
     }
 }
 
+#[cfg(target_os = "macos")]
 #[tokio::main]
 async fn main() -> ExitCode {
     let args = Cli::parse();
 
     let result = handle_autotoggle_command(args.serial_number.as_deref(), args.verbose).await;
+
+    if let Err(error) = result {
+        eprintln!("{}", error);
+        ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn main() -> ExitCode {
+    let args = Cli::parse();
+
+    let result = handle_autotoggle_command(args.serial_number.as_deref(), args.verbose);
 
     if let Err(error) = result {
         eprintln!("{}", error);

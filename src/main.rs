@@ -6,7 +6,6 @@ use std::fmt;
 use std::process::ExitCode;
 #[cfg(target_os = "macos")]
 use std::process::Stdio;
-use tokio;
 #[cfg(target_os = "macos")]
 use tokio::io::{AsyncBufReadExt, BufReader};
 #[cfg(target_os = "macos")]

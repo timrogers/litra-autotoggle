@@ -1,0 +1,30 @@
+[package]
+name = "litra-autotoggle"
+version = "0.1.0"
+edition = "2021"
+authors = ["Tim Rogers <timrogers@github.com>"]
+description = "Automatically turn your Logitech Litra device on when your webcam turns on, and off when your webcam turns off (macOS and Linux only)"
+repository = "https://github.com/timrogers/litra-autotoggle"
+license = "MIT"
+readme = "README.md"
+categories = ["hardware-support", "command-line-utilities"]
+keywords = ["logitech", "litra", "glow", "beam", "light"]
+
+# TODO: Remove this once we're on a newer tokio version that doesn't trip this up
+# https://github.com/tokio-rs/tokio/pull/6874
+[lints.clippy]
+needless_return = "allow"
+
+[[bin]]
+name = "litra-autotoggle"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4.5.20", features = ["derive"] }
+litra = "1.6.0"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+inotify = { version = "0.11.0" }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+tokio = { version = "1.40.0", features = ["full"] }

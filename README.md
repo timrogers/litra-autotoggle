@@ -46,9 +46,13 @@ Next, reboot your computer or run the following commands as `root`:
 
 ### In the background using Homebrew Services (only when installed with Homebrew on macOS)
 
-Run `brew services start litra-autotoggle`.
+Run `brew services start timrogers/tap/litra-autotoggle`.
 
 `litra-autotoggle` will run in the background, and your Litra will turn on when your webcam turns on, and off when your webcam turns off.
+
+You will receive a notification from macOS warning you about software running in the background:
+
+![macOS warning](https://github.com/user-attachments/assets/7abd6d99-0481-4684-8079-a6d80e0fcaea)
 
 ### From the command line
 

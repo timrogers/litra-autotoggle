@@ -31,7 +31,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install libudev-dev
         if: matrix.job.os == 'ubuntu-latest'
       - name: Cache Rust dependencies
-        uses: actions/cache@v4.0.2
+        uses: actions/cache@v4.1.1
         with:
           path: target
           key: ${{ runner.OS }}-build-${{ hashFiles('**/Cargo.lock') }}
@@ -150,7 +150,7 @@ jobs:
       - name: Install libudev-dev
         run: sudo apt-get update && sudo apt-get install libudev-dev
       - name: Cache Rust dependencies
-        uses: actions/cache@v4.0.2
+        uses: actions/cache@v4.1.1
         with:
           path: target
           key: ${{ runner.OS }}-build-${{ hashFiles('**/Cargo.lock') }}
@@ -230,7 +230,7 @@ jobs:
       - name: Install libudev-dev
         run: sudo apt-get update && sudo apt-get install libudev-dev
       - name: Cache Rust dependencies
-        uses: actions/cache@v4.0.2
+        uses: actions/cache@v4.1.1
         with:
           path: target
           key: ${{ runner.OS }}-build-${{ hashFiles('**/Cargo.lock') }}

@@ -70,7 +70,7 @@ jobs:
       - name: Sign macOS binary (macOS only)
         uses: indygreg/apple-code-sign-action@v1
         with:
-          input_path: litra_${{ steps.sanitise_ref.outputs.value }}_${{ matrix.job.binary_name }}
+          input_path: litra-autotoggle_${{ steps.sanitise_ref.outputs.value }}_${{ matrix.job.binary_name }}
           p12_file: key.p12
           p12_password: ${{ secrets.APPLE_SIGNING_KEY_PASSWORD }}
           sign: true

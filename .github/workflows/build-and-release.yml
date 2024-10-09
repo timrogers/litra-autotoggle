@@ -196,10 +196,10 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            litra_${{ steps.sanitise_ref.outputs.value }}_darwin-amd64
-            litra_${{ steps.sanitise_ref.outputs.value }}_darwin-arm64
-            litra_${{ steps.sanitise_ref.outputs.value }}_linux-amd64
-            litra_${{ steps.sanitise_ref.outputs.value }}_darwin-universal
+            litra-autotoggle_${{ steps.sanitise_ref.outputs.value }}_darwin-amd64
+            litra-autotoggle_${{ steps.sanitise_ref.outputs.value }}_darwin-arm64
+            litra-autotoggle_${{ steps.sanitise_ref.outputs.value }}_linux-amd64
+            litra-autotoggle_${{ steps.sanitise_ref.outputs.value }}_darwin-universal
   publish_on_homebrew:
     name: Publish release on Homebrew
     runs-on: ubuntu-latest

@@ -35,7 +35,7 @@ The following Logitech Litra devices, **connected via USB**, are supported:
 
 ### In the background, using Homebrew Services (macOS with [Homebrew](https://brew.sh/) only)
 
-Run `brew services start litra-autotoggle`.
+Run `brew services start timrogers/tap/litra-autotoggle`.
 
 `litra-autotoggle` will run in the background, and your Litra will turn on when your webcam turns on, and off when your webcam turns off. If no Litra device is connected, the listener will keep on running, but will do nothing.
 

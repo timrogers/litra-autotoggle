@@ -14,18 +14,18 @@ The following Logitech Litra devices, **connected via USB**, are supported:
 
 ## Installation
 
-### macOS with [Homebrew](https://brew.sh/)
+### macOS or Linux via [Homebrew](https://brew.sh/)
 
 1. Install the latest version of `litra-autotoggle` by running `brew tap timrogers/tap && brew install litra-autotoggle`.
 1. Run `litra-autotoggle --help` to check that everything is working.
 
-### All other platforms (using Cargo)
+### macOS or Linux via [Cargo](https://doc.rust-lang.org/cargo/), Rust's package manager
 
 1. Install [Rust](https://www.rust-lang.org/tools/install) on your machine, if it isn't already installed.
 1. Install the `litra-autotoggle` crate by running `cargo install litra-autotoggle`.
 1. Run `litra-autotoggle --help` to check that everything is working and see the available commands.
 
-### All other platforms (via binary)
+### macOS or Linux via direct binary download
 
 1. Download the [latest release](https://github.com/timrogers/litra-autotoggle/releases/latest) for your platform. macOS and Linux devices are supported.
 1. Add the binary to `$PATH`, so you can execute it from your shell. For the best experience, call it `litra-autotoggle`.
@@ -33,14 +33,14 @@ The following Logitech Litra devices, **connected via USB**, are supported:
 
 ## Usage
 
-### In the background, using Homebrew Services (macOS with [Homebrew](https://brew.sh/) only)
+### In the background, using Homebrew Services ([Homebrew](https://brew.sh/) installations only)
 
 Run `brew services start timrogers/tap/litra-autotoggle`.
 
 `litra-autotoggle` will run in the background, and your Litra will turn on when your webcam turns on, and off when your webcam turns off. If no Litra device is connected, the listener will keep on running, but will do nothing.
 
 > [!NOTE]
-> When starting the service for the first time, you will receive a notification from macOS warning you about software running in the background.
+> When starting the service for the first time on a macOS device, you will receive a notification warning you about software running in the background.
 
 ![macOS warning](https://github.com/user-attachments/assets/7abd6d99-0481-4684-8079-a6d80e0fcaea)
 

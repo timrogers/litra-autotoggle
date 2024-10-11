@@ -11,12 +11,20 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 #[cfg(target_os = "macos")]
 use tokio::process::Command;
 
-/// Automatically turn your Logitech Litra device on when your webcam turns on, and off when your webcam turns off (macOS and Linux only)
+/// Automatically turn your Logitech Litra device on when your webcam turns on, and off when your webcam turns off (macOS and Linux only).
 #[derive(Debug, Parser)]
 #[clap(name = "litra-autotoggle", version)]
 struct Cli {
     #[clap(long, short, help = "The serial number of the Logitech Litra device")]
     serial_number: Option<String>,
+
+    #[clap(
+        long,
+        short,
+        action,
+        help = "Exit with an error if no Litra device is found. By default, the program will run and listen for events even if no Litra device is found, but do nothing."
+    )]
+    require_device: bool,
 
     #[clap(long, short, action, help = "Output detailed log messages")]
     verbose: bool,
@@ -50,7 +58,8 @@ fn check_serial_number_if_some(serial_number: Option<&str>) -> impl Fn(&Device) 
 enum CliError {
     DeviceError(DeviceError),
     IoError(std::io::Error),
-    DeviceNotFound,
+    NoDevicesFound,
+    DeviceNotFound(String),
 }
 
 impl fmt::Display for CliError {
@@ -58,7 +67,12 @@ impl fmt::Display for CliError {
         match self {
             CliError::DeviceError(error) => error.fmt(f),
             CliError::IoError(error) => write!(f, "Input/output error: {}", error),
-            CliError::DeviceNotFound => write!(f, "Device not found."),
+            CliError::NoDevicesFound => write!(f, "No Litra devices found"),
+            CliError::DeviceNotFound(serial_number) => write!(
+                f,
+                "Litra device with serial number {} not found",
+                serial_number
+            ),
         }
     }
 }
@@ -80,18 +94,109 @@ type CliResult = Result<(), CliError>;
 fn get_first_supported_device(
     context: &Litra,
     serial_number: Option<&str>,
-) -> Result<DeviceHandle, CliError> {
-    context
+    require_device: bool,
+) -> Result<Option<DeviceHandle>, CliError> {
+    match context
         .get_connected_devices()
         .find(check_serial_number_if_some(serial_number))
-        .ok_or(CliError::DeviceNotFound)
-        .and_then(|dev| dev.open(context).map_err(CliError::DeviceError))
+    {
+        Some(device_handle) => device_handle
+            .open(context)
+            .map(Some)
+            .map_err(CliError::DeviceError),
+        None => {
+            if require_device {
+                if let Some(serial_number) = serial_number {
+                    Err(CliError::DeviceNotFound(serial_number.to_string()))
+                } else {
+                    Err(CliError::NoDevicesFound)
+                }
+            } else {
+                Ok(None)
+            }
+        }
+    }
+}
+
+fn turn_on_first_supported_device_and_log(
+    context: &Litra,
+    serial_number: Option<&str>,
+    require_device: bool,
+) -> Result<(), CliError> {
+    if let Some(device_handle) = get_first_supported_device(context, serial_number, require_device)?
+    {
+        println!(
+            "Turning on {} device (serial number: {})",
+            device_handle.device_type(),
+            get_serial_number_with_fallback(&device_handle)
+        );
+
+        device_handle.set_on(true)?;
+    } else {
+        print_device_not_found_log(serial_number);
+    }
+
+    Ok(())
+}
+
+fn turn_off_first_supported_device_and_log(
+    context: &Litra,
+    serial_number: Option<&str>,
+    require_device: bool,
+) -> Result<(), CliError> {
+    if let Some(device_handle) = get_first_supported_device(context, serial_number, require_device)?
+    {
+        println!(
+            "Turning off {} device (serial number: {})",
+            device_handle.device_type(),
+            get_serial_number_with_fallback(&device_handle)
+        );
+
+        device_handle.set_on(false)?;
+    } else {
+        print_device_not_found_log(serial_number);
+    }
+
+    Ok(())
+}
+
+fn print_device_not_found_log(serial_number: Option<&str>) {
+    if serial_number.is_some() {
+        println!(
+            "Litra device with serial number {} not found",
+            serial_number.unwrap()
+        );
+    } else {
+        println!("No Litra devices found");
+    }
+}
+
+fn get_serial_number_with_fallback(device_handle: &DeviceHandle) -> String {
+    match device_handle.serial_number().unwrap() {
+        Some(serial_number) => serial_number.to_string(),
+        None => "-".to_string(),
+    }
 }
 
 #[cfg(target_os = "macos")]
-async fn handle_autotoggle_command(serial_number: Option<&str>, verbose: bool) -> CliResult {
+async fn handle_autotoggle_command(
+    serial_number: Option<&str>,
+    verbose: bool,
+    require_device: bool,
+) -> CliResult {
     let context = Litra::new()?;
-    let device_handle = get_first_supported_device(&context, serial_number)?;
+
+    if let Some(device_handle) =
+        get_first_supported_device(&context, serial_number, require_device)?
+    {
+        println!(
+            "Found {} device (serial number: {})",
+            device_handle.device_type(),
+            get_serial_number_with_fallback(&device_handle)
+        );
+    } else {
+        print_device_not_found_log(serial_number);
+    }
 
     println!("Starting `log` process to listen for video device events...");
 
@@ -121,11 +226,13 @@ async fn handle_autotoggle_command(serial_number: Option<&str>, verbose: bool) -
             }
 
             if log_line.contains("AVCaptureSession_Tundra startRunning") {
-                println!("Video device turned on, turning on Litra device");
-                device_handle.set_on(true)?;
+                println!("Detected that a video device has been turned on, attempting to turn on Litra device...");
+
+                turn_on_first_supported_device_and_log(&context, serial_number, require_device)?;
             } else if log_line.contains("AVCaptureSession_Tundra stopRunning") {
-                println!("Video device turned off, turning off Litra device");
-                device_handle.set_on(false)?;
+                println!("Detected that a video device has been turned off, attempting to turn off Litra device...");
+
+                turn_off_first_supported_device_and_log(&context, serial_number, require_device)?;
             }
         }
     }
@@ -144,9 +251,24 @@ async fn handle_autotoggle_command(serial_number: Option<&str>, verbose: bool) -
 }
 
 #[cfg(target_os = "linux")]
-fn handle_autotoggle_command(serial_number: Option<&str>, _verbose: bool) -> CliResult {
+fn handle_autotoggle_command(
+    serial_number: Option<&str>,
+    _verbose: bool,
+    require_device: bool,
+) -> CliResult {
     let context = Litra::new()?;
-    let device_handle = get_first_supported_device(&context, serial_number)?;
+
+    if let Some(device_handle) =
+        get_first_supported_device(&context, serial_number, require_device)?
+    {
+        println!(
+            "Found {} device (serial number: {})",
+            device_handle.device_type(),
+            get_serial_number_with_fallback(&device_handle)
+        );
+    } else {
+        print_device_not_found_log(serial_number);
+    }
 
     let mut inotify = Inotify::init()?;
     for path in get_video_device_paths()? {
@@ -184,11 +306,13 @@ fn handle_autotoggle_command(serial_number: Option<&str>, _verbose: bool) -> Cli
             }
         }
         if num_devices_open == 0 {
-            println!("No video devices open, turning off light");
-            device_handle.set_on(false)?;
+            println!("Detected that a video device has been turned off, attempting to turn off Litra device...");
+
+            turn_off_first_supported_device_and_log(&context, serial_number, require_device)?;
         } else {
-            println!("{} video devices open, turning on light", num_devices_open);
-            device_handle.set_on(true)?;
+            println!("Detected that a video device has been turned on, attempting to turn on Litra device...");
+
+            turn_on_first_supported_device_and_log(&context, serial_number, require_device)?;
         }
     }
 }
@@ -198,7 +322,12 @@ fn handle_autotoggle_command(serial_number: Option<&str>, _verbose: bool) -> Cli
 async fn main() -> ExitCode {
     let args = Cli::parse();
 
-    let result = handle_autotoggle_command(args.serial_number.as_deref(), args.verbose).await;
+    let result = handle_autotoggle_command(
+        args.serial_number.as_deref(),
+        args.verbose,
+        args.require_device,
+    )
+    .await;
 
     if let Err(error) = result {
         eprintln!("{}", error);
@@ -212,7 +341,11 @@ async fn main() -> ExitCode {
 fn main() -> ExitCode {
     let args = Cli::parse();
 
-    let result = handle_autotoggle_command(args.serial_number.as_deref(), args.verbose);
+    let result = handle_autotoggle_command(
+        args.serial_number.as_deref(),
+        args.verbose,
+        args.require_device,
+    );
 
     if let Err(error) = result {
         eprintln!("{}", error);

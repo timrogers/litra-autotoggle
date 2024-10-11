@@ -31,7 +31,28 @@ The following Logitech Litra devices, **connected via USB**, are supported:
 1. Add the binary to `$PATH`, so you can execute it from your shell. For the best experience, call it `litra-autotoggle`.
 1. Run `litra-autotoggle --help` to check that everything is working.
 
-## Configuring `udev` permissions on Linux
+## Usage
+
+### In the background, using Homebrew Services (macOS with [Homebrew](https://brew.sh/) only)
+
+Run `brew services start litra-autotoggle`.
+
+`litra-autotoggle` will run in the background, and your Litra will turn on when your webcam turns on, and off when your webcam turns off. If no Litra device is connected, the listener will keep on running, but will do nothing.
+
+> [!NOTE]
+> When starting the service for the first time, you will receive a notification from macOS warning you about software running in the background.
+
+![macOS warning](https://github.com/user-attachments/assets/7abd6d99-0481-4684-8079-a6d80e0fcaea)
+
+### From the command line
+
+Run `litra-autotoggle`, with an optional `--serial-number` argument. (You can get the serial number using the `litra devices` command in the [`litra`](https://github.com/timrogers/litra-rs) CLI.)
+
+Your Litra will turn on when your webcam turns on, and off when your webcam turns off.
+
+If no Litra device is connected, the listener will keep on running, but will do nothing. Optionally, you can set the `--require-device` flag to enforce that a Litra device must be connected.
+
+## Configuring `udev` permissions (Linux only)
 
 On most Linux operating systems, you will need to manually configure permissions using [`udev`](https://www.man7.org/linux/man-pages/man7/udev.7.html) to allow non-`root` users to access and manage Litra devices.
 
@@ -41,21 +62,3 @@ Next, reboot your computer or run the following commands as `root`:
 
     # udevadm control --reload-rules
     # udevadm trigger
-
-## Usage
-
-### In the background using Homebrew Services (only when installed with Homebrew on macOS)
-
-Run `brew services start timrogers/tap/litra-autotoggle`.
-
-`litra-autotoggle` will run in the background, and your Litra will turn on when your webcam turns on, and off when your webcam turns off.
-
-You will receive a notification from macOS warning you about software running in the background:
-
-![macOS warning](https://github.com/user-attachments/assets/7abd6d99-0481-4684-8079-a6d80e0fcaea)
-
-### From the command line
-
-Run `litra-autotoggle`, with an optional `--serial-number` argument. (You can get the serial number using the `litra devices` command in the [`litra`](https://github.com/timrogers/litra-rs) CLI.)
-
-Your Litra will turn on when your webcam turns on, and off when your webcam turns off.

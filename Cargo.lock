@@ -239,16 +239,14 @@ checksum = "561d97a539a36e26a9a5fad1ea11a3039a67714694aaa379433e580854bc3dc5"
 
 [[package]]
 name = "litra"
-version = "1.6.0"
+version = "2.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7d2e20bee75246c21a0761c8490b85f85da054ce74bfdbe56e51a8a9e6a7d19a"
+checksum = "4a405d98a9a3e021f2aecc5a3cbccf31b18581ed7bd82900031bbd59a6194219"
 dependencies = [
  "clap",
  "hidapi",
- "inotify",
  "serde",
  "serde_json",
- "tokio",
 ]
 
 [[package]]

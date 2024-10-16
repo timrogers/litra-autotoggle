@@ -214,7 +214,7 @@ jobs:
             litra-autotoggle_${{ steps.sanitise_ref.outputs.value }}_darwin-amd64
             litra-autotoggle_${{ steps.sanitise_ref.outputs.value }}_darwin-aarch64
             litra-autotoggle_${{ steps.sanitise_ref.outputs.value }}_linux-amd64
-            litra-autotoggle_${{ steps.sanitise_ref.outputs.value }}_linux-aaarch64
+            litra-autotoggle_${{ steps.sanitise_ref.outputs.value }}_linux-aarch64
             litra-autotoggle_${{ steps.sanitise_ref.outputs.value }}_darwin-universal
   cargo_publish:
     name: Publish with Cargo to Crates.io

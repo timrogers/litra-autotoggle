@@ -26,6 +26,10 @@ struct Cli {
     )]
     require_device: bool,
 
+    #[cfg(target_os = "linux")]
+    #[clap(long, short = 'd', help = "The path of the video device to monitor")]
+    video_device: Option<String>,
+
     #[clap(long, short, action, help = "Output detailed log messages")]
     verbose: bool,
 }
@@ -255,6 +259,7 @@ fn handle_autotoggle_command(
     serial_number: Option<&str>,
     _verbose: bool,
     require_device: bool,
+    video_device: Option<&str>,
 ) -> CliResult {
     let context = Litra::new()?;
 
@@ -272,12 +277,14 @@ fn handle_autotoggle_command(
 
     let mut inotify = Inotify::init()?;
     for path in get_video_device_paths()? {
-        match inotify
-            .watches()
-            .add(&path, WatchMask::OPEN | WatchMask::CLOSE)
-        {
-            Ok(_) => println!("Watching device {}", path.display()),
-            Err(_) => eprintln!("Failed to watch device {}", path.display()),
+        if video_device.map_or(true, |device| path.to_str() == Some(device)) {
+            match inotify
+                .watches()
+                .add(&path, WatchMask::OPEN | WatchMask::CLOSE)
+            {
+                Ok(_) => println!("Watching device {}", path.display()),
+                Err(_) => eprintln!("Failed to watch device {}", path.display()),
+            }
         }
     }
 
@@ -345,6 +352,7 @@ fn main() -> ExitCode {
         args.serial_number.as_deref(),
         args.verbose,
         args.require_device,
+        args.video_device.as_deref(),
     );
 
     if let Err(error) = result {

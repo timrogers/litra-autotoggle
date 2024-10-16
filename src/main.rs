@@ -27,7 +27,11 @@ struct Cli {
     require_device: bool,
 
     #[cfg(target_os = "linux")]
-    #[clap(long, short = 'd', help = "The path of the video device to monitor (e.g. `/dev/video0`) (Linux only)")]
+    #[clap(
+        long,
+        short = 'd',
+        help = "The path of the video device to monitor (e.g. `/dev/video0`) (Linux only)"
+    )]
     video_device: Option<String>,
 
     #[clap(long, short, action, help = "Output detailed log messages")]

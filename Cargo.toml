@@ -27,4 +27,4 @@ litra = "2.1.0"
 inotify = { version = "0.11.0" }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-tokio = { version = "1.40.0", features = ["full"] }
+tokio = { version = "1.41.0", features = ["full"] }

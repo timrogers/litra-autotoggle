@@ -22,7 +22,7 @@ struct Cli {
         long,
         short,
         action,
-        help = "Exit with an error if no Litra device is found. By default, the program will run and listen for events even if no Litra device is found, but do nothing."
+        help = "Exit with an error if no Litra device is found. By default, the program will run and listen for events even if no Litra device is found, but do nothing. With this option set, the program will exit whenever it looks for a Litra device and none is found."
     )]
     require_device: bool,
 

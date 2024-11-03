@@ -51,7 +51,7 @@ Just run `litra-autotoggle`. Your Litra will turn on when your webcam turns on, 
 The following arguments are supported:
 
 - `--serial-number` to point to a specific Litra device. You can get the serial number using the `litra devices` command in the [`litra`](https://github.com/timrogers/litra-rs) CLI.
-- `--require-device` to enforce that a Litra device must be connected. By default, the listener will keep even if no Litra device is found.
+- `--require-device` to enforce that a Litra device must be connected. By default, the listener will keep running even if no Litra device is found.
 - `--video-device` (Linux only) to watch a specific video device (e.g. `/dev/video0`). By default, all video devices will be watched.
 
 ## Configuring `udev` permissions (Linux only)

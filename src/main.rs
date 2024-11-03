@@ -30,7 +30,7 @@ struct Cli {
     #[clap(
         long,
         short = 'd',
-        help = "The path of the video device to monitor (e.g. `/dev/video0`) (Linux only)"
+        help = "The path of the video device to monitor (e.g. `/dev/video0`) (Linux only). By default, all devices are monitored."
     )]
     video_device: Option<String>,
 

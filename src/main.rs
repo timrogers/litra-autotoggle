@@ -100,10 +100,14 @@ impl From<std::io::Error> for CliError {
 type CliResult = Result<(), CliError>;
 
 fn get_first_supported_device(
-    context: &Litra,
+    context: &mut Litra,
     serial_number: Option<&str>,
     require_device: bool,
 ) -> Result<Option<DeviceHandle>, CliError> {
+    {
+        context.refresh_connected_devices()?;
+    }
+
     match context
         .get_connected_devices()
         .find(check_serial_number_if_some(serial_number))
@@ -127,7 +131,7 @@ fn get_first_supported_device(
 }
 
 fn turn_on_first_supported_device_and_log(
-    context: &Litra,
+    context: &mut Litra,
     serial_number: Option<&str>,
     require_device: bool,
 ) -> Result<(), CliError> {
@@ -148,7 +152,7 @@ fn turn_on_first_supported_device_and_log(
 }
 
 fn turn_off_first_supported_device_and_log(
-    context: &Litra,
+    context: &mut Litra,
     serial_number: Option<&str>,
     require_device: bool,
 ) -> Result<(), CliError> {
@@ -192,10 +196,10 @@ async fn handle_autotoggle_command(
     verbose: bool,
     require_device: bool,
 ) -> CliResult {
-    let context = Litra::new()?;
+    let mut context = Litra::new()?;
 
     if let Some(device_handle) =
-        get_first_supported_device(&context, serial_number, require_device)?
+        get_first_supported_device(&mut context, serial_number, require_device)?
     {
         println!(
             "Found {} device (serial number: {})",
@@ -236,11 +240,19 @@ async fn handle_autotoggle_command(
             if log_line.contains("AVCaptureSession_Tundra startRunning") {
                 println!("Detected that a video device has been turned on, attempting to turn on Litra device...");
 
-                turn_on_first_supported_device_and_log(&context, serial_number, require_device)?;
+                turn_on_first_supported_device_and_log(
+                    &mut context,
+                    serial_number,
+                    require_device,
+                )?;
             } else if log_line.contains("AVCaptureSession_Tundra stopRunning") {
                 println!("Detected that a video device has been turned off, attempting to turn off Litra device...");
 
-                turn_off_first_supported_device_and_log(&context, serial_number, require_device)?;
+                turn_off_first_supported_device_and_log(
+                    &mut context,
+                    serial_number,
+                    require_device,
+                )?;
             }
         }
     }
@@ -265,10 +277,10 @@ fn handle_autotoggle_command(
     require_device: bool,
     video_device: Option<&str>,
 ) -> CliResult {
-    let context = Litra::new()?;
+    let mut context = Litra::new()?;
 
     if let Some(device_handle) =
-        get_first_supported_device(&context, serial_number, require_device)?
+        get_first_supported_device(&mut context, serial_number, require_device)?
     {
         println!(
             "Found {} device (serial number: {})",
@@ -319,11 +331,11 @@ fn handle_autotoggle_command(
         if num_devices_open == 0 {
             println!("Detected that a video device has been turned off, attempting to turn off Litra device...");
 
-            turn_off_first_supported_device_and_log(&context, serial_number, require_device)?;
+            turn_off_first_supported_device_and_log(&mut context, serial_number, require_device)?;
         } else {
             println!("Detected that a video device has been turned on, attempting to turn on Litra device...");
 
-            turn_on_first_supported_device_and_log(&context, serial_number, require_device)?;
+            turn_on_first_supported_device_and_log(&mut context, serial_number, require_device)?;
         }
     }
 }

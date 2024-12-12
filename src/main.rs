@@ -7,9 +7,13 @@ use std::process::ExitCode;
 #[cfg(target_os = "macos")]
 use std::process::Stdio;
 #[cfg(target_os = "macos")]
+use std::sync::Arc;
+#[cfg(target_os = "macos")]
 use tokio::io::{AsyncBufReadExt, BufReader};
 #[cfg(target_os = "macos")]
 use tokio::process::Command;
+#[cfg(target_os = "macos")]
+use tokio::sync::Mutex;
 
 /// Automatically turn your Logitech Litra device on when your webcam turns on, and off when your webcam turns off (macOS and Linux only).
 #[derive(Debug, Parser)]
@@ -196,18 +200,23 @@ async fn handle_autotoggle_command(
     verbose: bool,
     require_device: bool,
 ) -> CliResult {
-    let mut context = Litra::new()?;
+    // Wrap context in Arc<Mutex<>> to enable sharing across tasks
+    let context = Arc::new(Mutex::new(Litra::new()?));
 
-    if let Some(device_handle) =
-        get_first_supported_device(&mut context, serial_number, require_device)?
+    // Use context inside an async block with locking
     {
-        println!(
-            "Found {} device (serial number: {})",
-            device_handle.device_type(),
-            get_serial_number_with_fallback(&device_handle)
-        );
-    } else {
-        print_device_not_found_log(serial_number);
+        let mut context_lock = context.lock().await;
+        if let Some(device_handle) =
+            get_first_supported_device(&mut context_lock, serial_number, require_device)?
+        {
+            println!(
+                "Found {} device (serial number: {})",
+                device_handle.device_type(),
+                get_serial_number_with_fallback(&device_handle)
+            );
+        } else {
+            print_device_not_found_log(serial_number);
+        }
     }
 
     println!("Starting `log` process to listen for video device events...");
@@ -227,6 +236,10 @@ async fn handle_autotoggle_command(
 
     println!("Listening for video device events...");
 
+    // Add variables for throttling
+    let mut pending_action: Option<tokio::task::JoinHandle<()>> = None;
+    let desired_state = std::sync::Arc::new(tokio::sync::Mutex::new(None));
+
     while let Some(log_line) = reader
         .next_line()
         .await
@@ -237,23 +250,57 @@ async fn handle_autotoggle_command(
                 println!("{}", log_line);
             }
 
+            // Update desired state based on the event
             if log_line.contains("AVCaptureSession_Tundra startRunning") {
-                println!("Detected that a video device has been turned on, attempting to turn on Litra device...");
+                println!("Detected that a video device has been turned on.");
 
-                turn_on_first_supported_device_and_log(
-                    &mut context,
-                    serial_number,
-                    require_device,
-                )?;
+                let mut state = desired_state.lock().await;
+                *state = Some(true);
             } else if log_line.contains("AVCaptureSession_Tundra stopRunning") {
-                println!("Detected that a video device has been turned off, attempting to turn off Litra device...");
+                println!("Detected that a video device has been turned off.");
 
-                turn_off_first_supported_device_and_log(
-                    &mut context,
-                    serial_number,
-                    require_device,
-                )?;
+                let mut state = desired_state.lock().await;
+                *state = Some(false);
             }
+
+            // Cancel any pending action
+            if let Some(handle) = pending_action.take() {
+                handle.abort();
+            }
+
+            // Clone variables for the async task
+            let desired_state_clone = desired_state.clone();
+            let context_clone = context.clone();
+            let serial_number_clone = serial_number.map(|s| s.to_string());
+
+            // Start a new delayed action
+            pending_action = Some(tokio::spawn(async move {
+                tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+
+                let state = {
+                    let mut state = desired_state_clone.lock().await;
+                    state.take()
+                };
+
+                if let Some(state) = state {
+                    let mut context_lock = context_clone.lock().await;
+                    if state {
+                        println!("Attempting to turn on Litra device...");
+                        let _ = turn_on_first_supported_device_and_log(
+                            &mut context_lock,
+                            serial_number_clone.as_deref(),
+                            require_device,
+                        );
+                    } else {
+                        println!("Attempting to turn off Litra device...");
+                        let _ = turn_off_first_supported_device_and_log(
+                            &mut context_lock,
+                            serial_number_clone.as_deref(),
+                            require_device,
+                        );
+                    }
+                }
+            }));
         }
     }
 

@@ -38,6 +38,15 @@ struct Cli {
     )]
     video_device: Option<String>,
 
+    #[cfg(target_os = "macos")]
+    #[clap(
+        long,
+        short,
+        default_value = "1500",
+        help = "The delay in milliseconds between detecting a webcam event and toggling the Litra (macOS only). When your webcam turns on or off, multiple events may be generated in quick succession. Setting a delay allows the program to wait for all events before taking action, avoiding flickering."
+    )]
+    delay: u64,
+
     #[clap(long, short, action, help = "Output detailed log messages")]
     verbose: bool,
 }
@@ -199,6 +208,7 @@ async fn handle_autotoggle_command(
     serial_number: Option<&str>,
     verbose: bool,
     require_device: bool,
+    delay: u64,
 ) -> CliResult {
     // Wrap context in Arc<Mutex<>> to enable sharing across tasks
     let context = Arc::new(Mutex::new(Litra::new()?));
@@ -275,7 +285,7 @@ async fn handle_autotoggle_command(
 
             // Start a new delayed action
             pending_action = Some(tokio::spawn(async move {
-                tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+                tokio::time::sleep(tokio::time::Duration::from_millis(delay)).await;
 
                 let state = {
                     let mut state = desired_state_clone.lock().await;
@@ -396,6 +406,7 @@ async fn main() -> ExitCode {
         args.serial_number.as_deref(),
         args.verbose,
         args.require_device,
+        args.delay,
     )
     .await;
 

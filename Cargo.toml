@@ -20,7 +20,7 @@ name = "litra-autotoggle"
 path = "src/main.rs"
 
 [dependencies]
-clap = { version = "4.5.23", features = ["derive"] }
+clap = { version = "4.5.27", features = ["derive"] }
 litra = "2.2.0"
 
 [target.'cfg(target_os = "linux")'.dependencies]

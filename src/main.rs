@@ -6,13 +6,13 @@ use std::fmt;
 use std::process::ExitCode;
 #[cfg(target_os = "macos")]
 use std::process::Stdio;
+use std::sync::Arc;
 #[cfg(target_os = "macos")]
 use std::sync::Arc;
 #[cfg(target_os = "macos")]
 use tokio::io::{AsyncBufReadExt, BufReader};
 #[cfg(target_os = "macos")]
 use tokio::process::Command;
-#[cfg(target_os = "macos")]
 use tokio::sync::Mutex;
 
 /// Automatically turn your Logitech Litra device on when your webcam turns on, and off when your webcam turns off (macOS and Linux only).
@@ -38,12 +38,11 @@ struct Cli {
     )]
     video_device: Option<String>,
 
-    #[cfg(target_os = "macos")]
     #[clap(
         long,
-        short,
+        short = 't',
         default_value = "1500",
-        help = "The delay in milliseconds between detecting a webcam event and toggling the Litra (macOS only). When your webcam turns on or off, multiple events may be generated in quick succession. Setting a delay allows the program to wait for all events before taking action, avoiding flickering."
+        help = "The delay in milliseconds between detecting a webcam event and toggling the Litra. When your webcam turns on or off, multiple events may be generated in quick succession. Setting a delay allows the program to wait for all events before taking action, avoiding flickering."
     )]
     delay: u64,
 
@@ -328,24 +327,30 @@ async fn handle_autotoggle_command(
 }
 
 #[cfg(target_os = "linux")]
-fn handle_autotoggle_command(
+async fn handle_autotoggle_command(
     serial_number: Option<&str>,
     _verbose: bool,
     require_device: bool,
     video_device: Option<&str>,
+    delay: u64,
 ) -> CliResult {
-    let mut context = Litra::new()?;
+    // Wrap context in Arc<Mutex<>> to enable sharing across tasks
+    let context = Arc::new(Mutex::new(Litra::new()?));
 
-    if let Some(device_handle) =
-        get_first_supported_device(&mut context, serial_number, require_device)?
+    // Use context inside an async block with locking
     {
-        println!(
-            "Found {} device (serial number: {})",
-            device_handle.device_type(),
-            get_serial_number_with_fallback(&device_handle)
-        );
-    } else {
-        print_device_not_found_log(serial_number);
+        let mut context_lock = context.lock().await;
+        if let Some(device_handle) =
+            get_first_supported_device(&mut context_lock, serial_number, require_device)?
+        {
+            println!(
+                "Found {} device (serial number: {})",
+                device_handle.device_type(),
+                get_serial_number_with_fallback(&device_handle)
+            );
+        } else {
+            print_device_not_found_log(serial_number);
+        }
     }
 
     let mut inotify = Inotify::init()?;
@@ -360,6 +365,10 @@ fn handle_autotoggle_command(
             }
         }
     }
+
+    // Add variables for throttling similar to macOS
+    let mut pending_action: Option<tokio::task::JoinHandle<()>> = None;
+    let desired_state = std::sync::Arc::new(tokio::sync::Mutex::new(None));
 
     let mut num_devices_open: usize = 0;
     loop {
@@ -388,12 +397,53 @@ fn handle_autotoggle_command(
         if num_devices_open == 0 {
             println!("Detected that a video device has been turned off, attempting to turn off Litra device...");
 
-            turn_off_first_supported_device_and_log(&mut context, serial_number, require_device)?;
+            let mut state = desired_state.lock().await;
+            *state = Some(false);
         } else {
             println!("Detected that a video device has been turned on, attempting to turn on Litra device...");
 
-            turn_on_first_supported_device_and_log(&mut context, serial_number, require_device)?;
+            let mut state = desired_state.lock().await;
+            *state = Some(true);
+        };
+
+        // Cancel any pending action
+        if let Some(handle) = pending_action.take() {
+            handle.abort();
         }
+
+        // Clone variables for the async task
+        let desired_state_clone = desired_state.clone();
+        let context_clone = context.clone();
+        let serial_number_clone = serial_number.map(|s| s.to_string());
+
+        // Start a new delayed action
+        pending_action = Some(tokio::spawn(async move {
+            tokio::time::sleep(tokio::time::Duration::from_millis(delay)).await;
+
+            let state = {
+                let mut state = desired_state_clone.lock().await;
+                state.take()
+            };
+
+            if let Some(state) = state {
+                let mut context_lock = context_clone.lock().await;
+                if state {
+                    println!("Attempting to turn on Litra device...");
+                    let _ = turn_on_first_supported_device_and_log(
+                        &mut context_lock,
+                        serial_number_clone.as_deref(),
+                        require_device,
+                    );
+                } else {
+                    println!("Attempting to turn off Litra device...");
+                    let _ = turn_off_first_supported_device_and_log(
+                        &mut context_lock,
+                        serial_number_clone.as_deref(),
+                        require_device,
+                    );
+                }
+            }
+        }));
     }
 }
 
@@ -419,7 +469,8 @@ async fn main() -> ExitCode {
 }
 
 #[cfg(target_os = "linux")]
-fn main() -> ExitCode {
+#[tokio::main]
+async fn main() -> ExitCode {
     let args = Cli::parse();
 
     let result = handle_autotoggle_command(
@@ -427,9 +478,10 @@ fn main() -> ExitCode {
         args.verbose,
         args.require_device,
         args.video_device.as_deref(),
+        args.delay,
     );
 
-    if let Err(error) = result {
+    if let Err(error) = result.await {
         eprintln!("{}", error);
         ExitCode::FAILURE
     } else {

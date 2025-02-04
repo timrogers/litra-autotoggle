@@ -394,12 +394,12 @@ async fn handle_autotoggle_command(
         }
         if num_devices_open == 0 {
             println!("Detected that a video device has been turned off.");
-            
+
             let mut state = desired_state.lock().await;
             *state = Some(false);
         } else {
             println!("Detected that a video device has been turned on.");
-            
+
             let mut state = desired_state.lock().await;
             *state = Some(true);
         };

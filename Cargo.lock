@@ -251,7 +251,7 @@ dependencies = [
 
 [[package]]
 name = "litra-autotoggle"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "clap",
  "inotify",

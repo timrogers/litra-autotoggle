@@ -48,19 +48,6 @@ struct Cli {
     verbose: bool,
 }
 
-#[cfg(target_os = "linux")]
-fn get_video_device_paths() -> std::io::Result<Vec<std::path::PathBuf>> {
-    Ok(std::fs::read_dir("/dev")?
-        .filter_map(|entry| entry.ok())
-        .filter_map(|e| {
-            e.file_name()
-                .to_str()
-                .filter(|name| name.starts_with("video"))
-                .map(|_| e.path())
-        })
-        .collect())
-}
-
 fn check_serial_number_if_some(serial_number: Option<&str>) -> impl Fn(&Device) -> bool + '_ {
     move |device| {
         serial_number.as_ref().map_or(true, |expected| {
@@ -351,47 +338,62 @@ async fn handle_autotoggle_command(
         }
     }
 
+    // Path to watch for video device events
+    let watch_path = video_device.unwrap_or("/dev");
+
+    // Extract video device name from path, or use "video" as default
+    let video_file_prefix = video_device.and_then(|p| p.split('/').last()).unwrap_or("video");
+
     let mut inotify = Inotify::init()?;
-    for path in get_video_device_paths()? {
-        if video_device.map_or(true, |device| path.to_str() == Some(device)) {
-            match inotify
-                .watches()
-                .add(&path, WatchMask::OPEN | WatchMask::CLOSE)
-            {
-                Ok(_) => println!("Watching device {}", path.display()),
-                Err(_) => eprintln!("Failed to watch device {}", path.display()),
-            }
-        }
+    match inotify
+        .watches()
+        .add(watch_path, WatchMask::OPEN | WatchMask::CLOSE)
+    {
+        Ok(_) => println!("Watching {}", watch_path),
+        Err(e) => eprintln!("Failed to watch {}: {}", watch_path, e),
     }
 
     // Add variables for throttling similar to macOS
     let mut pending_action: Option<tokio::task::JoinHandle<()>> = None;
     let desired_state = std::sync::Arc::new(tokio::sync::Mutex::new(None));
 
+
     let mut num_devices_open: usize = 0;
     loop {
+        let start_num_devices_open = num_devices_open;
+
         // Read events that were added with `Watches::add` above.
         let mut buffer = [0; 1024];
-        let events = inotify.read_events_blocking(&mut buffer)?;
-        for event in events {
-            match event.mask {
-                EventMask::OPEN => {
-                    match event.name.and_then(std::ffi::OsStr::to_str) {
-                        Some(name) => println!("Video device opened: {}", name),
-                        None => println!("Video device opened"),
+        inotify
+            .read_events_blocking(&mut buffer)?
+            .filter_map(|event| {
+                match event.name.and_then(std::ffi::OsStr::to_str) {
+                    Some(name) if name.starts_with(video_file_prefix) => {
+                        Some((name, event))
                     }
-                    num_devices_open = num_devices_open.saturating_add(1);
+                    _ => None,
                 }
-                EventMask::CLOSE_WRITE | EventMask::CLOSE_NOWRITE => {
-                    match event.name.and_then(std::ffi::OsStr::to_str) {
-                        Some(name) => println!("Video device closed: {}", name),
-                        None => println!("Video device closed"),
+            })
+            .for_each(|(name, event)| {
+                match event.mask {
+                    EventMask::OPEN => {
+                        println!("Video device opened: {}", name);
+                        num_devices_open = num_devices_open.saturating_add(1);
                     }
-                    num_devices_open = num_devices_open.saturating_sub(1);
+                    EventMask::CLOSE_WRITE | EventMask::CLOSE_NOWRITE => {
+                        println!("Video device closed: {}", name);
+                        num_devices_open = num_devices_open.saturating_sub(1);
+                    }
+                    _ => (),
                 }
-                _ => (),
-            }
+            });
+
+        // Since we're watching for events in `/dev`, we need to skip if the delta is 0
+        // because it means there was no change in the number of video devices.
+        if start_num_devices_open == num_devices_open {
+            continue;
         }
+
         if num_devices_open == 0 {
             println!("Detected that a video device has been turned off.");
 

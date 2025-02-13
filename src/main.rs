@@ -342,7 +342,9 @@ async fn handle_autotoggle_command(
     let watch_path = video_device.unwrap_or("/dev");
 
     // Extract video device name from path, or use "video" as default
-    let video_file_prefix = video_device.and_then(|p| p.split('/').last()).unwrap_or("video");
+    let video_file_prefix = video_device
+        .and_then(|p| p.split('/').last())
+        .unwrap_or("video");
 
     let mut inotify = Inotify::init()?;
     match inotify
@@ -357,7 +359,6 @@ async fn handle_autotoggle_command(
     let mut pending_action: Option<tokio::task::JoinHandle<()>> = None;
     let desired_state = std::sync::Arc::new(tokio::sync::Mutex::new(None));
 
-
     let mut num_devices_open: usize = 0;
     loop {
         let start_num_devices_open = num_devices_open;
@@ -366,26 +367,20 @@ async fn handle_autotoggle_command(
         let mut buffer = [0; 1024];
         inotify
             .read_events_blocking(&mut buffer)?
-            .filter_map(|event| {
-                match event.name.and_then(std::ffi::OsStr::to_str) {
-                    Some(name) if name.starts_with(video_file_prefix) => {
-                        Some((name, event))
-                    }
-                    _ => None,
-                }
+            .filter_map(|event| match event.name.and_then(std::ffi::OsStr::to_str) {
+                Some(name) if name.starts_with(video_file_prefix) => Some((name, event)),
+                _ => None,
             })
-            .for_each(|(name, event)| {
-                match event.mask {
-                    EventMask::OPEN => {
-                        println!("Video device opened: {}", name);
-                        num_devices_open = num_devices_open.saturating_add(1);
-                    }
-                    EventMask::CLOSE_WRITE | EventMask::CLOSE_NOWRITE => {
-                        println!("Video device closed: {}", name);
-                        num_devices_open = num_devices_open.saturating_sub(1);
-                    }
-                    _ => (),
+            .for_each(|(name, event)| match event.mask {
+                EventMask::OPEN => {
+                    println!("Video device opened: {}", name);
+                    num_devices_open = num_devices_open.saturating_add(1);
                 }
+                EventMask::CLOSE_WRITE | EventMask::CLOSE_NOWRITE => {
+                    println!("Video device closed: {}", name);
+                    num_devices_open = num_devices_open.saturating_sub(1);
+                }
+                _ => (),
             });
 
         // Since we're watching for events in `/dev`, we need to skip if the delta is 0

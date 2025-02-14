@@ -231,7 +231,7 @@ async fn handle_autotoggle_command(
     let mut child = Command::new("log")
         .arg("stream")
         .arg("--predicate")
-        .arg("subsystem == \"com.apple.cmio\" AND (eventMessage CONTAINS \"AVCaptureSession_Tundra startRunning\" || eventMessage CONTAINS \"AVCaptureSession_Tundra stopRunning\")")
+        .arg("(subsystem == \"com.apple.cmio\" AND (eventMessage CONTAINS \"AVCaptureSession_Tundra startRunning\" || eventMessage CONTAINS \"AVCaptureSession_Tundra stopRunning\")) OR (process == \"Safari\")")
         .stdout(Stdio::piped())
         .spawn()?;
 
@@ -258,12 +258,16 @@ async fn handle_autotoggle_command(
             }
 
             // Update desired state based on the event
-            if log_line.contains("AVCaptureSession_Tundra startRunning") {
+            if log_line.contains("AVCaptureSession_Tundra startRunning")
+                || log_line.contains("state was: 2048, is now: 6144")
+            {
                 println!("Detected that a video device has been turned on.");
 
                 let mut state = desired_state.lock().await;
                 *state = Some(true);
-            } else if log_line.contains("AVCaptureSession_Tundra stopRunning") {
+            } else if log_line.contains("AVCaptureSession_Tundra stopRunning")
+                || log_line.contains("state was: 6144, is now: 2048")
+            {
                 println!("Detected that a video device has been turned off.");
 
                 let mut state = desired_state.lock().await;

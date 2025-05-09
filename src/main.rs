@@ -2,7 +2,9 @@ use clap::Parser;
 #[cfg(target_os = "linux")]
 use inotify::{EventMask, Inotify, WatchMask};
 use litra::{Device, DeviceError, DeviceHandle, Litra};
+use std::collections::hash_map::DefaultHasher;
 use std::fmt;
+use std::hash::{Hash, Hasher};
 use std::process::ExitCode;
 #[cfg(target_os = "macos")]
 use std::process::Stdio;
@@ -19,6 +21,12 @@ use tokio::sync::Mutex;
 struct Cli {
     #[clap(long, short, help = "The serial number of the Logitech Litra device")]
     serial_number: Option<String>,
+    
+    #[clap(long, help = "Select devices by their type (LitraGlow, LitraBeam, LitraBeamLX)")]
+    device_type: Option<String>,
+    
+    #[clap(long, help = "Apply command to all connected devices", default_value = "false")]
+    all_devices: bool,
 
     #[clap(
         long,
@@ -48,14 +56,35 @@ struct Cli {
     verbose: bool,
 }
 
-fn check_serial_number_if_some(serial_number: Option<&str>) -> impl Fn(&Device) -> bool + '_ {
+fn check_device_filters(
+    serial_number: Option<&str>,
+    device_type: Option<&str>,
+) -> impl Fn(&Device) -> bool + '_ {
     move |device| {
-        serial_number.as_ref().map_or(true, |expected| {
+        // Check device type if specified
+        let type_match = device_type.as_ref().map_or(true, |expected| {
+            // Convert both to strings without spaces and compare
+            let device_type_str = format!("{}", device.device_type())
+                .replace(" ", "")
+                .to_lowercase();
+            
+            let expected_type = expected.replace(" ", "").to_lowercase();
+            
+            // Check if the expected type is contained in the device type (to be more flexible)
+            device_type_str.contains(&expected_type) || 
+                expected_type.contains(&device_type_str)
+        });
+        
+        // Then check serial number if specified
+        let serial_match = serial_number.as_ref().map_or(true, |expected| {
             device
                 .device_info()
                 .serial_number()
                 .is_some_and(|actual| &actual == expected)
-        })
+        });
+        
+        // Both filters must match
+        type_match && serial_match
     }
 }
 
@@ -99,17 +128,16 @@ type CliResult = Result<(), CliError>;
 fn get_first_supported_device(
     context: &mut Litra,
     serial_number: Option<&str>,
+    device_type: Option<&str>,
     require_device: bool,
 ) -> Result<Option<DeviceHandle>, CliError> {
-    {
-        context.refresh_connected_devices()?;
-    }
+    context.refresh_connected_devices()?;
 
     match context
         .get_connected_devices()
-        .find(check_serial_number_if_some(serial_number))
+        .find(check_device_filters(serial_number, device_type))
     {
-        Some(device_handle) => device_handle
+        Some(device) => device
             .open(context)
             .map(Some)
             .map_err(CliError::DeviceError),
@@ -127,46 +155,110 @@ fn get_first_supported_device(
     }
 }
 
-fn turn_on_first_supported_device_and_log(
+fn get_all_supported_devices(
     context: &mut Litra,
     serial_number: Option<&str>,
-    require_device: bool,
-) -> Result<(), CliError> {
-    if let Some(device_handle) = get_first_supported_device(context, serial_number, require_device)?
-    {
-        println!(
-            "Turning on {} device (serial number: {})",
-            device_handle.device_type(),
-            get_serial_number_with_fallback(&device_handle)
-        );
+    device_type: Option<&str>,
+) -> Result<Vec<DeviceHandle>, CliError> {
+    context.refresh_connected_devices()?;
 
-        device_handle.set_on(true)?;
-    } else {
-        print_device_not_found_log(serial_number);
-    }
+    let devices: Result<Vec<DeviceHandle>, DeviceError> = context
+        .get_connected_devices()
+        .filter(check_device_filters(serial_number, device_type))
+        .map(|device| device.open(context))
+        .collect();
 
-    Ok(())
+    devices.map_err(CliError::DeviceError)
 }
 
-fn turn_off_first_supported_device_and_log(
+fn turn_on_supported_devices_and_log(
     context: &mut Litra,
     serial_number: Option<&str>,
+    device_type: Option<&str>,
     require_device: bool,
+    all_devices: bool,
 ) -> Result<(), CliError> {
-    if let Some(device_handle) = get_first_supported_device(context, serial_number, require_device)?
-    {
-        println!(
-            "Turning off {} device (serial number: {})",
-            device_handle.device_type(),
-            get_serial_number_with_fallback(&device_handle)
-        );
-
-        device_handle.set_on(false)?;
+    if all_devices {
+        let devices = get_all_supported_devices(context, serial_number, device_type)?;
+        if devices.is_empty() {
+            if require_device {
+                return Err(CliError::NoDevicesFound);
+            }
+            print_device_not_found_log(serial_number);
+            return Ok(());
+        }
+        
+        for device_handle in devices {
+            println!(
+                "Turning on {} device (serial number: {})",
+                device_handle.device_type(),
+                get_serial_number_with_fallback(&device_handle)
+            );
+            
+            let _ = device_handle.set_on(true); // Ignore errors for individual devices
+        }
+        Ok(())
     } else {
-        print_device_not_found_log(serial_number);
-    }
+        if let Some(device_handle) = get_first_supported_device(context, serial_number, device_type, require_device)?
+        {
+            println!(
+                "Turning on {} device (serial number: {})",
+                device_handle.device_type(),
+                get_serial_number_with_fallback(&device_handle)
+            );
 
-    Ok(())
+            device_handle.set_on(true)?;
+        } else {
+            print_device_not_found_log(serial_number);
+        }
+
+        Ok(())
+    }
+}
+
+fn turn_off_supported_devices_and_log(
+    context: &mut Litra,
+    serial_number: Option<&str>,
+    device_type: Option<&str>,
+    require_device: bool,
+    all_devices: bool,
+) -> Result<(), CliError> {
+    if all_devices {
+        let devices = get_all_supported_devices(context, serial_number, device_type)?;
+        if devices.is_empty() {
+            if require_device {
+                return Err(CliError::NoDevicesFound);
+            }
+            print_device_not_found_log(serial_number);
+            return Ok(());
+        }
+        
+        for device_handle in devices {
+            println!(
+                "Turning off {} device (serial number: {})",
+                device_handle.device_type(),
+                get_serial_number_with_fallback(&device_handle)
+            );
+            
+            let _ = device_handle.set_on(false); // Ignore errors for individual devices
+        }
+        Ok(())
+    } else {
+        if let Some(device_handle) = get_first_supported_device(context, serial_number, device_type, require_device)?
+        {
+            println!(
+                "Turning off {} device (serial number: {})",
+                device_handle.device_type(),
+                get_serial_number_with_fallback(&device_handle)
+            );
+
+            device_handle.set_on(false)?;
+        } else {
+            print_device_not_found_log(serial_number);
+        }
+
+        Ok(())
+    }
 }
 
 fn print_device_not_found_log(serial_number: Option<&str>) {
@@ -181,9 +273,29 @@ fn print_device_not_found_log(serial_number: Option<&str>) {
 }
 
 fn get_serial_number_with_fallback(device_handle: &DeviceHandle) -> String {
-    match device_handle.serial_number().unwrap() {
-        Some(serial_number) => serial_number.to_string(),
-        None => "-".to_string(),
+    match device_handle.serial_number() {
+        Ok(Some(serial)) if !serial.is_empty() => serial.to_string(),
+        _ => {
+            // Generate a deterministic serial based on device type and path
+            if let Ok(device_info) = device_handle.hid_device().get_device_info() {
+                let product_id = device_info.product_id();
+                let path = device_info.path().to_string_lossy();
+                let device_type_code = match device_handle.device_type() {
+                    litra::DeviceType::LitraGlow => "GLOW",
+                    litra::DeviceType::LitraBeam => "BEAM",
+                    litra::DeviceType::LitraBeamLX => "BEAMLX",
+                };
+                
+                // Create a deterministic identifier using first 12 chars of a hash
+                let mut hasher = DefaultHasher::new();
+                format!("{}:{}:{}", device_type_code, product_id, path).hash(&mut hasher);
+                let hash = hasher.finish();
+                
+                format!("{:012X}", hash % 0x1000000000000)
+            } else {
+                "UNKNOWN".to_string()
+            }
+        }
     }
 }
 
@@ -201,7 +313,7 @@ async fn handle_autotoggle_command(
     {
         let mut context_lock = context.lock().await;
         if let Some(device_handle) =
-            get_first_supported_device(&mut context_lock, serial_number, require_device)?
+            get_first_supported_device(&mut context_lock, serial_number, None, require_device)?
         {
             println!(
                 "Found {} device (serial number: {})",
@@ -280,17 +392,21 @@ async fn handle_autotoggle_command(
                     let mut context_lock = context_clone.lock().await;
                     if state {
                         println!("Attempting to turn on Litra device...");
-                        let _ = turn_on_first_supported_device_and_log(
+                        let _ = turn_on_supported_devices_and_log(
                             &mut context_lock,
                             serial_number_clone.as_deref(),
+                            None,
                             require_device,
+                            false,
                         );
                     } else {
                         println!("Attempting to turn off Litra device...");
-                        let _ = turn_off_first_supported_device_and_log(
+                        let _ = turn_off_supported_devices_and_log(
                             &mut context_lock,
                             serial_number_clone.as_deref(),
+                            None,
                             require_device,
+                            false,
                         );
                     }
                 }
@@ -326,7 +442,7 @@ async fn handle_autotoggle_command(
     {
         let mut context_lock = context.lock().await;
         if let Some(device_handle) =
-            get_first_supported_device(&mut context_lock, serial_number, require_device)?
+            get_first_supported_device(&mut context_lock, serial_number, None, require_device)?
         {
             println!(
                 "Found {} device (serial number: {})",
@@ -424,17 +540,21 @@ async fn handle_autotoggle_command(
                 let mut context_lock = context_clone.lock().await;
                 if state {
                     println!("Attempting to turn on Litra device...");
-                    let _ = turn_on_first_supported_device_and_log(
+                    let _ = turn_on_supported_devices_and_log(
                         &mut context_lock,
                         serial_number_clone.as_deref(),
+                        None,
                         require_device,
+                        false,
                     );
                 } else {
                     println!("Attempting to turn off Litra device...");
-                    let _ = turn_off_first_supported_device_and_log(
+                    let _ = turn_off_supported_devices_and_log(
                         &mut context_lock,
                         serial_number_clone.as_deref(),
+                        None,
                         require_device,
+                        false,
                     );
                 }
             }

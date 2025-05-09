@@ -273,29 +273,9 @@ fn print_device_not_found_log(serial_number: Option<&str>) {
 }
 
 fn get_serial_number_with_fallback(device_handle: &DeviceHandle) -> String {
-    match device_handle.serial_number() {
-        Ok(Some(serial)) if !serial.is_empty() => serial.to_string(),
-        _ => {
-            // Generate a deterministic serial based on device type and path
-            if let Ok(device_info) = device_handle.hid_device().get_device_info() {
-                let product_id = device_info.product_id();
-                let path = device_info.path().to_string_lossy();
-                let device_type_code = match device_handle.device_type() {
-                    litra::DeviceType::LitraGlow => "GLOW",
-                    litra::DeviceType::LitraBeam => "BEAM",
-                    litra::DeviceType::LitraBeamLX => "BEAMLX",
-                };
-                
-                // Create a deterministic identifier using first 12 chars of a hash
-                let mut hasher = DefaultHasher::new();
-                format!("{}:{}:{}", device_type_code, product_id, path).hash(&mut hasher);
-                let hash = hasher.finish();
-                
-                format!("{:012X}", hash % 0x1000000000000)
-            } else {
-                "UNKNOWN".to_string()
-            }
-        }
+    match device_handle.serial_number().unwrap() {
+        Some(serial_number) => serial_number.to_string(),
+        None => "-".to_string(),
     }
 }
 

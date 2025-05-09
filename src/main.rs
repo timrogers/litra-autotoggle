@@ -56,10 +56,10 @@ struct Cli {
     verbose: bool,
 }
 
-fn check_device_filters(
-    serial_number: Option<&str>,
-    device_type: Option<&str>,
-) -> impl Fn(&Device) -> bool + '_ {
+fn check_device_filters<'a>(
+    serial_number: Option<&'a str>,
+    device_type: Option<&'a str>,
+) -> impl Fn(&Device) -> bool + 'a {
     move |device| {
         // Check device type if specified
         let type_match = device_type.as_ref().map_or(true, |expected| {
@@ -603,3 +603,11 @@ async fn main() -> ExitCode {
         ExitCode::SUCCESS
     }
 }
+
+#[cfg(target_os = "windows")]
+#[tokio::main]
+async fn main() -> ExitCode {
+    eprintln!("This program only works on Linux and macOS.");
+    ExitCode::FAILURE
+}
+

@@ -158,7 +158,7 @@ fn turn_on_first_supported_device_and_log(
         device_handle.set_on(true)?;
         
         send_notification(
-            "Litra Device Turned On",
+            "Litra device turned on",
             &format!("{} (S/N: {}) has been turned on", device_type, serial)
         );
     } else {
@@ -186,7 +186,7 @@ fn turn_off_first_supported_device_and_log(
         device_handle.set_on(false)?;
         
         send_notification(
-            "Litra Device Turned Off",
+            "Litra device turned off",
             &format!("{} (S/N: {}) has been turned off", device_type, serial)
         );
     } else {

@@ -2,6 +2,7 @@ use clap::Parser;
 #[cfg(target_os = "linux")]
 use inotify::{EventMask, Inotify, WatchMask};
 use litra::{Device, DeviceError, DeviceHandle, Litra};
+use notify_rust::Notification;
 use std::fmt;
 use std::process::ExitCode;
 #[cfg(target_os = "macos")]
@@ -127,20 +128,39 @@ fn get_first_supported_device(
     }
 }
 
+fn send_notification(title: &str, body: &str) {
+    if let Err(e) = Notification::new()
+        .summary(title)
+        .body(body)
+        .icon("camera-video")  // Using a standard icon name
+        .timeout(3000)         // Notification disappears after 3 seconds
+        .show() 
+    {
+        eprintln!("Failed to send notification: {}", e);
+    }
+}
+
 fn turn_on_first_supported_device_and_log(
     context: &mut Litra,
     serial_number: Option<&str>,
     require_device: bool,
 ) -> Result<(), CliError> {
-    if let Some(device_handle) = get_first_supported_device(context, serial_number, require_device)?
-    {
+    if let Some(device_handle) = get_first_supported_device(context, serial_number, require_device)? {
+        let device_type = device_handle.device_type();
+        let serial = get_serial_number_with_fallback(&device_handle);
+        
         println!(
             "Turning on {} device (serial number: {})",
-            device_handle.device_type(),
-            get_serial_number_with_fallback(&device_handle)
+            device_type,
+            serial
         );
 
         device_handle.set_on(true)?;
+        
+        send_notification(
+            "Litra Device Turned On",
+            &format!("{} (S/N: {}) has been turned on", device_type, serial)
+        );
     } else {
         print_device_not_found_log(serial_number);
     }
@@ -153,15 +173,22 @@ fn turn_off_first_supported_device_and_log(
     serial_number: Option<&str>,
     require_device: bool,
 ) -> Result<(), CliError> {
-    if let Some(device_handle) = get_first_supported_device(context, serial_number, require_device)?
-    {
+    if let Some(device_handle) = get_first_supported_device(context, serial_number, require_device)? {
+        let device_type = device_handle.device_type();
+        let serial = get_serial_number_with_fallback(&device_handle);
+        
         println!(
             "Turning off {} device (serial number: {})",
-            device_handle.device_type(),
-            get_serial_number_with_fallback(&device_handle)
+            device_type,
+            serial
         );
 
         device_handle.set_on(false)?;
+        
+        send_notification(
+            "Litra Device Turned Off",
+            &format!("{} (S/N: {}) has been turned off", device_type, serial)
+        );
     } else {
         print_device_not_found_log(serial_number);
     }

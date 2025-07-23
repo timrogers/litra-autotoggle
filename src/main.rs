@@ -2,6 +2,9 @@ use clap::Parser;
 #[cfg(target_os = "linux")]
 use inotify::{EventMask, Inotify, WatchMask};
 use litra::{Device, DeviceError, DeviceHandle, Litra};
+#[cfg(target_os = "macos")]
+use log::debug;
+use log::{error, info, warn};
 use std::fmt;
 use std::process::ExitCode;
 #[cfg(target_os = "macos")]
@@ -50,7 +53,7 @@ struct Cli {
 
 fn check_serial_number_if_some(serial_number: Option<&str>) -> impl Fn(&Device) -> bool + '_ {
     move |device| {
-        serial_number.as_ref().map_or(true, |expected| {
+        serial_number.as_ref().is_none_or(|expected| {
             device
                 .device_info()
                 .serial_number()
@@ -71,12 +74,11 @@ impl fmt::Display for CliError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             CliError::DeviceError(error) => error.fmt(f),
-            CliError::IoError(error) => write!(f, "Input/output error: {}", error),
+            CliError::IoError(error) => write!(f, "Input/output error: {error}"),
             CliError::NoDevicesFound => write!(f, "No Litra devices found"),
             CliError::DeviceNotFound(serial_number) => write!(
                 f,
-                "Litra device with serial number {} not found",
-                serial_number
+                "Litra device with serial number {serial_number} not found"
             ),
         }
     }
@@ -134,7 +136,7 @@ fn turn_on_first_supported_device_and_log(
 ) -> Result<(), CliError> {
     if let Some(device_handle) = get_first_supported_device(context, serial_number, require_device)?
     {
-        println!(
+        info!(
             "Turning on {} device (serial number: {})",
             device_handle.device_type(),
             get_serial_number_with_fallback(&device_handle)
@@ -155,7 +157,7 @@ fn turn_off_first_supported_device_and_log(
 ) -> Result<(), CliError> {
     if let Some(device_handle) = get_first_supported_device(context, serial_number, require_device)?
     {
-        println!(
+        info!(
             "Turning off {} device (serial number: {})",
             device_handle.device_type(),
             get_serial_number_with_fallback(&device_handle)
@@ -171,12 +173,12 @@ fn turn_off_first_supported_device_and_log(
 
 fn print_device_not_found_log(serial_number: Option<&str>) {
     if serial_number.is_some() {
-        println!(
+        warn!(
             "Litra device with serial number {} not found",
             serial_number.unwrap()
         );
     } else {
-        println!("No Litra devices found");
+        warn!("No Litra devices found");
     }
 }
 
@@ -190,7 +192,6 @@ fn get_serial_number_with_fallback(device_handle: &DeviceHandle) -> String {
 #[cfg(target_os = "macos")]
 async fn handle_autotoggle_command(
     serial_number: Option<&str>,
-    verbose: bool,
     require_device: bool,
     delay: u64,
 ) -> CliResult {
@@ -203,7 +204,7 @@ async fn handle_autotoggle_command(
         if let Some(device_handle) =
             get_first_supported_device(&mut context_lock, serial_number, require_device)?
         {
-            println!(
+            info!(
                 "Found {} device (serial number: {})",
                 device_handle.device_type(),
                 get_serial_number_with_fallback(&device_handle)
@@ -213,7 +214,7 @@ async fn handle_autotoggle_command(
         }
     }
 
-    println!("Starting `log` process to listen for video device events...");
+    info!("Starting `log` process to listen for video device events...");
 
     let mut child = Command::new("log")
         .arg("stream")
@@ -228,7 +229,7 @@ async fn handle_autotoggle_command(
         .expect("Failed to start `log` process to listen for video device events");
     let mut reader = BufReader::new(stdout).lines();
 
-    println!("Listening for video device events...");
+    info!("Listening for video device events...");
 
     // Add variables for throttling
     let mut pending_action: Option<tokio::task::JoinHandle<()>> = None;
@@ -240,18 +241,16 @@ async fn handle_autotoggle_command(
         .expect("Failed to read log line from `log` process when listening for video device events")
     {
         if !log_line.starts_with("Filtering the log data") {
-            if verbose {
-                println!("{}", log_line);
-            }
+            debug!("Log line: {log_line}");
 
             // Update desired state based on the event
             if log_line.contains("AVCaptureSession_Tundra startRunning") {
-                println!("Detected that a video device has been turned on.");
+                info!("Detected that a video device has been turned on.");
 
                 let mut state = desired_state.lock().await;
                 *state = Some(true);
             } else if log_line.contains("AVCaptureSession_Tundra stopRunning") {
-                println!("Detected that a video device has been turned off.");
+                info!("Detected that a video device has been turned off.");
 
                 let mut state = desired_state.lock().await;
                 *state = Some(false);
@@ -279,14 +278,14 @@ async fn handle_autotoggle_command(
                 if let Some(state) = state {
                     let mut context_lock = context_clone.lock().await;
                     if state {
-                        println!("Attempting to turn on Litra device...");
+                        info!("Attempting to turn on Litra device...");
                         let _ = turn_on_first_supported_device_and_log(
                             &mut context_lock,
                             serial_number_clone.as_deref(),
                             require_device,
                         );
                     } else {
-                        println!("Attempting to turn off Litra device...");
+                        info!("Attempting to turn off Litra device...");
                         let _ = turn_off_first_supported_device_and_log(
                             &mut context_lock,
                             serial_number_clone.as_deref(),
@@ -302,19 +301,14 @@ async fn handle_autotoggle_command(
         "Something went wrong with the `log` process when listening for video device events",
     );
 
-    Err(CliError::IoError(std::io::Error::new(
-        std::io::ErrorKind::Other,
-        format!(
-            "`log` process exited unexpectedly when listening for video device events - {}",
-            status
-        ),
-    )))
+    Err(CliError::IoError(std::io::Error::other(format!(
+        "`log` process exited unexpectedly when listening for video device events - {status}"
+    ))))
 }
 
 #[cfg(target_os = "linux")]
 async fn handle_autotoggle_command(
     serial_number: Option<&str>,
-    _verbose: bool,
     require_device: bool,
     video_device: Option<&str>,
     delay: u64,
@@ -328,7 +322,7 @@ async fn handle_autotoggle_command(
         if let Some(device_handle) =
             get_first_supported_device(&mut context_lock, serial_number, require_device)?
         {
-            println!(
+            info!(
                 "Found {} device (serial number: {})",
                 device_handle.device_type(),
                 get_serial_number_with_fallback(&device_handle)
@@ -351,8 +345,8 @@ async fn handle_autotoggle_command(
         .watches()
         .add(watch_path, WatchMask::OPEN | WatchMask::CLOSE)
     {
-        Ok(_) => println!("Watching {}", watch_path),
-        Err(e) => eprintln!("Failed to watch {}: {}", watch_path, e),
+        Ok(_) => info!("Watching {}", watch_path),
+        Err(e) => error!("Failed to watch {}: {}", watch_path, e),
     }
 
     // Add variables for throttling similar to macOS
@@ -373,11 +367,11 @@ async fn handle_autotoggle_command(
             })
             .for_each(|(name, event)| match event.mask {
                 EventMask::OPEN => {
-                    println!("Video device opened: {}", name);
+                    info!("Video device opened: {}", name);
                     num_devices_open = num_devices_open.saturating_add(1);
                 }
                 EventMask::CLOSE_WRITE | EventMask::CLOSE_NOWRITE => {
-                    println!("Video device closed: {}", name);
+                    info!("Video device closed: {}", name);
                     num_devices_open = num_devices_open.saturating_sub(1);
                 }
                 _ => (),
@@ -390,12 +384,12 @@ async fn handle_autotoggle_command(
         }
 
         if num_devices_open == 0 {
-            println!("Detected that a video device has been turned off.");
+            info!("Detected that a video device has been turned off.");
 
             let mut state = desired_state.lock().await;
             *state = Some(false);
         } else {
-            println!("Detected that a video device has been turned on.");
+            info!("Detected that a video device has been turned on.");
 
             let mut state = desired_state.lock().await;
             *state = Some(true);
@@ -423,14 +417,14 @@ async fn handle_autotoggle_command(
             if let Some(state) = state {
                 let mut context_lock = context_clone.lock().await;
                 if state {
-                    println!("Attempting to turn on Litra device...");
+                    info!("Attempting to turn on Litra device...");
                     let _ = turn_on_first_supported_device_and_log(
                         &mut context_lock,
                         serial_number_clone.as_deref(),
                         require_device,
                     );
                 } else {
-                    println!("Attempting to turn off Litra device...");
+                    info!("Attempting to turn off Litra device...");
                     let _ = turn_off_first_supported_device_and_log(
                         &mut context_lock,
                         serial_number_clone.as_deref(),
@@ -447,16 +441,18 @@ async fn handle_autotoggle_command(
 async fn main() -> ExitCode {
     let args = Cli::parse();
 
+    let log_level = if args.verbose { "debug" } else { "info" };
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(log_level)).init();
+
     let result = handle_autotoggle_command(
         args.serial_number.as_deref(),
-        args.verbose,
         args.require_device,
         args.delay,
     )
     .await;
 
     if let Err(error) = result {
-        eprintln!("{}", error);
+        error!("{error}");
         ExitCode::FAILURE
     } else {
         ExitCode::SUCCESS
@@ -468,16 +464,18 @@ async fn main() -> ExitCode {
 async fn main() -> ExitCode {
     let args = Cli::parse();
 
+    let log_level = if args.verbose { "debug" } else { "info" };
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(log_level)).init();
+
     let result = handle_autotoggle_command(
         args.serial_number.as_deref(),
-        args.verbose,
         args.require_device,
         args.video_device.as_deref(),
         args.delay,
     );
 
     if let Err(error) = result.await {
-        eprintln!("{}", error);
+        error!("{}", error);
         ExitCode::FAILURE
     } else {
         ExitCode::SUCCESS

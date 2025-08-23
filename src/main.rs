@@ -506,27 +506,34 @@ async fn handle_autotoggle_command(
 
     let mut num_devices_open: usize = 0;
     loop {
-        let mut buffer = [0; 1024];
-
         tokio::select! {
             events_result = tokio::task::spawn_blocking({
                 let mut inotify_clone = inotify;
+                let video_file_prefix = video_file_prefix.to_string();
                 move || {
-                    inotify_clone.read_events_blocking(&mut buffer)
+                    let mut buffer = [0; 1024];
+                    let events = inotify_clone.read_events_blocking(&mut buffer)?;
+                    
+                    // Extract the data we need from events before they go out of scope
+                    let filtered_events: Vec<(String, EventMask)> = events
+                        .filter_map(|event| {
+                            event.name
+                                .and_then(std::ffi::OsStr::to_str)
+                                .filter(|name| name.starts_with(&video_file_prefix))
+                                .map(|name| (name.to_string(), event.mask))
+                        })
+                        .collect();
+                    
+                    Ok::<(Inotify, Vec<(String, EventMask)>), std::io::Error>((inotify_clone, filtered_events))
                 }
             }) => {
-                inotify = events_result.unwrap()?;
-                let events: Vec<_> = inotify
-                    .filter_map(|event| match event.name.and_then(std::ffi::OsStr::to_str) {
-                        Some(name) if name.starts_with(video_file_prefix) => Some((name.to_string(), event)),
-                        _ => None,
-                    })
-                    .collect();
+                let (restored_inotify, events) = events_result.unwrap()?;
+                inotify = restored_inotify;
 
                 let start_num_devices_open = num_devices_open;
 
-                for (name, event) in events {
-                    match event.mask {
+                for (name, mask) in events {
+                    match mask {
                         EventMask::OPEN => {
                             info!("Video device opened: {}", name);
                             num_devices_open = num_devices_open.saturating_add(1);
@@ -601,7 +608,7 @@ async fn handle_autotoggle_command(
                             )
                         };
 
-                        if let Err(error) = result {
+                        if let Err(_error) = result {
                             let _ = exit_tx_clone.send(()).await;
                             return;
                         }

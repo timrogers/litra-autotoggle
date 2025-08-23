@@ -487,7 +487,7 @@ async fn handle_autotoggle_command(
 
     // Extract video device name from path, or use "video" as default
     let video_file_prefix = video_device
-        .and_then(|p| p.split('/').last())
+        .and_then(|p| p.split('/').next_back())
         .unwrap_or("video");
 
     let mut inotify = Inotify::init()?;
@@ -513,7 +513,7 @@ async fn handle_autotoggle_command(
                 move || {
                     let mut buffer = [0; 1024];
                     let events = inotify_clone.read_events_blocking(&mut buffer)?;
-                    
+
                     // Extract the data we need from events before they go out of scope
                     let filtered_events: Vec<(String, EventMask)> = events
                         .filter_map(|event| {
@@ -523,7 +523,7 @@ async fn handle_autotoggle_command(
                                 .map(|name| (name.to_string(), event.mask))
                         })
                         .collect();
-                    
+
                     Ok::<(Inotify, Vec<(String, EventMask)>), std::io::Error>((inotify_clone, filtered_events))
                 }
             }) => {
@@ -574,7 +574,7 @@ async fn handle_autotoggle_command(
                 let context_clone = context.clone();
                 let serial_number_clone = serial_number.map(|s| s.to_string());
                 let device_path_clone = device_path.map(|p| p.to_string());
-                let device_type_clone = device_type.clone();
+                let device_type_clone = device_type;
                 let exit_tx_clone = exit_tx.clone();
 
                 // Start a new delayed action

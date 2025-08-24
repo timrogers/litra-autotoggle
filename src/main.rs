@@ -337,7 +337,7 @@ async fn handle_autotoggle_command(
 
     // Extract video device name from path, or use "video" as default
     let video_file_prefix = video_device
-        .and_then(|p| p.split('/').last())
+        .and_then(|p| p.split('/').next_back())
         .unwrap_or("video");
 
     let mut inotify = Inotify::init()?;

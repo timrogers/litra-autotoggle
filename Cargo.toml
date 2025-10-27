@@ -20,7 +20,7 @@ name = "litra-autotoggle"
 path = "src/main.rs"
 
 [dependencies]
-clap = { version = "4.5.46", features = ["derive"] }
+clap = { version = "4.5.50", features = ["derive"] }
 env_logger = "0.11.5"
 litra = "2.4.0"
 log = "0.4.22"

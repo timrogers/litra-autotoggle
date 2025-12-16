@@ -46,14 +46,19 @@ Run `brew services start timrogers/tap/litra-autotoggle`.
 
 ### From the command line
 
-Just run `litra-autotoggle`. Your Litra will turn on when your webcam turns on, and off when your webcam turns off.
+Just run `litra-autotoggle`. By default, all connected Litra devices will turn on when your webcam turns on, and off when your webcam turns off.
 
 The following arguments are supported:
 
-- `--serial-number` to point to a specific Litra device. You can get the serial number using the `litra devices` command in the [`litra`](https://github.com/timrogers/litra-rs) CLI.
+- `--serial-number` to point to a specific Litra device by serial number. You can get the serial number using the `litra devices` command in the [`litra`](https://github.com/timrogers/litra-rs) CLI.
+- `--device-path` to point to a specific Litra device by its path (useful for devices that don't show a serial number).
+- `--device-type` to point to a specific Litra device type (`glow`, `beam` or `beam_lx`).
 - `--require-device` to enforce that a Litra device must be connected. By default, the listener will keep running even if no Litra device is found. With this set, the listener will exit whenever it looks for a Litra device and none is found.
 - `--video-device` (Linux only) to watch a specific video device (e.g. `/dev/video0`). By default, all video devices will be watched.
 - `--delay` to customize the delay (in milliseconds) between a webcam event being detected and toggling your Litra. When your webcam turns on or off, multiple events may be generated in quick succession. Setting a delay allows the program to wait for all events before taking action, avoiding flickering. Defaults to 1.5 seconds (1500 milliseconds).
+
+> [!NOTE]
+> Only one filter (`--serial-number`, `--device-path`, or `--device-type`) can be specified at a time.
 
 ## Configuring `udev` permissions (Linux only)
 

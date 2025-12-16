@@ -88,9 +88,7 @@ fn check_device_filters<'a>(
                 litra::DeviceType::LitraBeam => "beam",
                 litra::DeviceType::LitraBeamLX => "beam_lx",
             };
-            if device_type_str != expected_type {
-                return false;
-            }
+            return device_type_str == expected_type;
         }
 
         // If a serial number is specified, we'll filter by it after opening the device
@@ -146,9 +144,14 @@ fn validate_single_filter(
     device_path: Option<&str>,
     device_type: Option<&str>,
 ) -> Result<(), CliError> {
-    let filter_count = serial_number.is_some() as usize
-        + device_path.is_some() as usize
-        + device_type.is_some() as usize;
+    let filter_count = [
+        serial_number.is_some(),
+        device_path.is_some(),
+        device_type.is_some(),
+    ]
+    .iter()
+    .filter(|&&x| x)
+    .count();
 
     if filter_count > 1 {
         Err(CliError::MultipleFiltersSpecified)

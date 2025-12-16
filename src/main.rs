@@ -1,7 +1,7 @@
 use clap::Parser;
 #[cfg(target_os = "linux")]
 use inotify::{EventMask, Inotify, WatchMask};
-use litra::{Device, DeviceError, DeviceHandle, Litra};
+use litra::{DeviceError, DeviceHandle, Litra};
 #[cfg(target_os = "macos")]
 use log::debug;
 use log::{error, info, warn};
@@ -20,8 +20,8 @@ use tokio::sync::Mutex;
 #[derive(Debug, Parser)]
 #[clap(name = "litra-autotoggle", version)]
 struct Cli {
-    #[clap(long, short, help = "The serial number of the Logitech Litra device")]
-    serial_number: Option<String>,
+    #[clap(long, short, help = "The serial number of the Logitech Litra device (can be specified multiple times to target specific devices; if omitted, all devices are targeted)")]
+    serial_number: Vec<String>,
 
     #[clap(
         long,
@@ -51,14 +51,15 @@ struct Cli {
     verbose: bool,
 }
 
-fn check_serial_number_if_some(serial_number: Option<&str>) -> impl Fn(&Device) -> bool + '_ {
+fn check_serial_numbers(serial_numbers: &[String]) -> impl Fn(&litra::Device) -> bool + '_ {
     move |device| {
-        serial_number.as_ref().is_none_or(|expected| {
-            device
-                .device_info()
-                .serial_number()
-                .is_some_and(|actual| &actual == expected)
-        })
+        serial_numbers.is_empty()
+            || serial_numbers.iter().any(|expected| {
+                device
+                    .device_info()
+                    .serial_number()
+                    .is_some_and(|actual| &actual == expected)
+            })
     }
 }
 
@@ -98,100 +99,101 @@ impl From<std::io::Error> for CliError {
 
 type CliResult = Result<(), CliError>;
 
-fn get_first_supported_device(
+fn get_matching_devices(
     context: &mut Litra,
-    serial_number: Option<&str>,
+    serial_numbers: &[String],
     require_device: bool,
-) -> Result<Option<DeviceHandle>, CliError> {
-    {
-        context.refresh_connected_devices()?;
-    }
+) -> Result<Vec<DeviceHandle>, CliError> {
+    context.refresh_connected_devices()?;
 
-    match context
+    let matching_devices: Result<Vec<DeviceHandle>, CliError> = context
         .get_connected_devices()
-        .find(check_serial_number_if_some(serial_number))
-    {
-        Some(device_handle) => device_handle
-            .open(context)
-            .map(Some)
-            .map_err(CliError::DeviceError),
-        None => {
-            if require_device {
-                if let Some(serial_number) = serial_number {
-                    Err(CliError::DeviceNotFound(serial_number.to_string()))
-                } else {
-                    Err(CliError::NoDevicesFound)
-                }
-            } else {
-                Ok(None)
-            }
+        .filter(check_serial_numbers(serial_numbers))
+        .map(|device| device.open(context).map_err(CliError::from))
+        .collect();
+
+    let matching_devices = matching_devices?;
+
+    if matching_devices.is_empty() && require_device {
+        if serial_numbers.is_empty() {
+            return Err(CliError::NoDevicesFound);
+        } else {
+            return Err(CliError::DeviceNotFound(serial_numbers.join(", ")));
         }
     }
+
+    Ok(matching_devices)
 }
 
-fn turn_on_first_supported_device_and_log(
+fn turn_on_devices_and_log(
     context: &mut Litra,
-    serial_number: Option<&str>,
+    serial_numbers: &[String],
     require_device: bool,
 ) -> Result<(), CliError> {
-    if let Some(device_handle) = get_first_supported_device(context, serial_number, require_device)?
-    {
+    let device_handles = get_matching_devices(context, serial_numbers, require_device)?;
+
+    if device_handles.is_empty() {
+        print_device_not_found_log(serial_numbers);
+        return Ok(());
+    }
+
+    for device_handle in device_handles {
         info!(
             "Turning on {} device (serial number: {})",
             device_handle.device_type(),
             get_serial_number_with_fallback(&device_handle)
         );
-
         device_handle.set_on(true)?;
-    } else {
-        print_device_not_found_log(serial_number);
     }
 
     Ok(())
 }
 
-fn turn_off_first_supported_device_and_log(
+fn turn_off_devices_and_log(
     context: &mut Litra,
-    serial_number: Option<&str>,
+    serial_numbers: &[String],
     require_device: bool,
 ) -> Result<(), CliError> {
-    if let Some(device_handle) = get_first_supported_device(context, serial_number, require_device)?
-    {
+    let device_handles = get_matching_devices(context, serial_numbers, require_device)?;
+
+    if device_handles.is_empty() {
+        print_device_not_found_log(serial_numbers);
+        return Ok(());
+    }
+
+    for device_handle in device_handles {
         info!(
             "Turning off {} device (serial number: {})",
             device_handle.device_type(),
             get_serial_number_with_fallback(&device_handle)
         );
-
         device_handle.set_on(false)?;
-    } else {
-        print_device_not_found_log(serial_number);
     }
 
     Ok(())
 }
 
-fn print_device_not_found_log(serial_number: Option<&str>) {
-    if serial_number.is_some() {
-        warn!(
-            "Litra device with serial number {} not found",
-            serial_number.unwrap()
-        );
-    } else {
+fn print_device_not_found_log(serial_numbers: &[String]) {
+    if serial_numbers.is_empty() {
         warn!("No Litra devices found");
+    } else {
+        warn!(
+            "Litra device(s) with serial number(s) {} not found",
+            serial_numbers.join(", ")
+        );
     }
 }
 
 fn get_serial_number_with_fallback(device_handle: &DeviceHandle) -> String {
-    match device_handle.serial_number().unwrap() {
-        Some(serial_number) => serial_number.to_string(),
-        None => "-".to_string(),
+    match device_handle.serial_number() {
+        Ok(Some(serial_number)) => serial_number,
+        _ => "-".to_string(),
     }
 }
 
 #[cfg(target_os = "macos")]
 async fn handle_autotoggle_command(
-    serial_number: Option<&str>,
+    serial_numbers: Vec<String>,
     require_device: bool,
     delay: u64,
 ) -> CliResult {
@@ -201,16 +203,24 @@ async fn handle_autotoggle_command(
     // Use context inside an async block with locking
     {
         let mut context_lock = context.lock().await;
-        if let Some(device_handle) =
-            get_first_supported_device(&mut context_lock, serial_number, require_device)?
-        {
-            info!(
-                "Found {} device (serial number: {})",
-                device_handle.device_type(),
-                get_serial_number_with_fallback(&device_handle)
-            );
+        let device_handles =
+            get_matching_devices(&mut context_lock, &serial_numbers, require_device)?;
+
+        if device_handles.is_empty() {
+            print_device_not_found_log(&serial_numbers);
         } else {
-            print_device_not_found_log(serial_number);
+            info!(
+                "Found {} device(s)",
+                device_handles
+                    .iter()
+                    .map(|d| format!(
+                        "{} ({})",
+                        d.device_type(),
+                        get_serial_number_with_fallback(d)
+                    ))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
         }
     }
 
@@ -264,7 +274,7 @@ async fn handle_autotoggle_command(
             // Clone variables for the async task
             let desired_state_clone = desired_state.clone();
             let context_clone = context.clone();
-            let serial_number_clone = serial_number.map(|s| s.to_string());
+            let serial_numbers_clone = serial_numbers.clone();
 
             // Start a new delayed action
             pending_action = Some(tokio::spawn(async move {
@@ -278,17 +288,17 @@ async fn handle_autotoggle_command(
                 if let Some(state) = state {
                     let mut context_lock = context_clone.lock().await;
                     if state {
-                        info!("Attempting to turn on Litra device...");
-                        let _ = turn_on_first_supported_device_and_log(
+                        info!("Attempting to turn on Litra device(s)...");
+                        let _ = turn_on_devices_and_log(
                             &mut context_lock,
-                            serial_number_clone.as_deref(),
+                            &serial_numbers_clone,
                             require_device,
                         );
                     } else {
-                        info!("Attempting to turn off Litra device...");
-                        let _ = turn_off_first_supported_device_and_log(
+                        info!("Attempting to turn off Litra device(s)...");
+                        let _ = turn_off_devices_and_log(
                             &mut context_lock,
-                            serial_number_clone.as_deref(),
+                            &serial_numbers_clone,
                             require_device,
                         );
                     }
@@ -308,7 +318,7 @@ async fn handle_autotoggle_command(
 
 #[cfg(target_os = "linux")]
 async fn handle_autotoggle_command(
-    serial_number: Option<&str>,
+    serial_numbers: Vec<String>,
     require_device: bool,
     video_device: Option<&str>,
     delay: u64,
@@ -319,16 +329,24 @@ async fn handle_autotoggle_command(
     // Use context inside an async block with locking
     {
         let mut context_lock = context.lock().await;
-        if let Some(device_handle) =
-            get_first_supported_device(&mut context_lock, serial_number, require_device)?
-        {
-            info!(
-                "Found {} device (serial number: {})",
-                device_handle.device_type(),
-                get_serial_number_with_fallback(&device_handle)
-            );
+        let device_handles =
+            get_matching_devices(&mut context_lock, &serial_numbers, require_device)?;
+
+        if device_handles.is_empty() {
+            print_device_not_found_log(&serial_numbers);
         } else {
-            print_device_not_found_log(serial_number);
+            info!(
+                "Found {} device(s)",
+                device_handles
+                    .iter()
+                    .map(|d| format!(
+                        "{} ({})",
+                        d.device_type(),
+                        get_serial_number_with_fallback(d)
+                    ))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
         }
     }
 
@@ -403,7 +421,7 @@ async fn handle_autotoggle_command(
         // Clone variables for the async task
         let desired_state_clone = desired_state.clone();
         let context_clone = context.clone();
-        let serial_number_clone = serial_number.map(|s| s.to_string());
+        let serial_numbers_clone = serial_numbers.clone();
 
         // Start a new delayed action
         pending_action = Some(tokio::spawn(async move {
@@ -417,17 +435,17 @@ async fn handle_autotoggle_command(
             if let Some(state) = state {
                 let mut context_lock = context_clone.lock().await;
                 if state {
-                    info!("Attempting to turn on Litra device...");
-                    let _ = turn_on_first_supported_device_and_log(
+                    info!("Attempting to turn on Litra device(s)...");
+                    let _ = turn_on_devices_and_log(
                         &mut context_lock,
-                        serial_number_clone.as_deref(),
+                        &serial_numbers_clone,
                         require_device,
                     );
                 } else {
-                    info!("Attempting to turn off Litra device...");
-                    let _ = turn_off_first_supported_device_and_log(
+                    info!("Attempting to turn off Litra device(s)...");
+                    let _ = turn_off_devices_and_log(
                         &mut context_lock,
-                        serial_number_clone.as_deref(),
+                        &serial_numbers_clone,
                         require_device,
                     );
                 }
@@ -445,7 +463,7 @@ async fn main() -> ExitCode {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(log_level)).init();
 
     let result = handle_autotoggle_command(
-        args.serial_number.as_deref(),
+        args.serial_number,
         args.require_device,
         args.delay,
     )
@@ -468,7 +486,7 @@ async fn main() -> ExitCode {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(log_level)).init();
 
     let result = handle_autotoggle_command(
-        args.serial_number.as_deref(),
+        args.serial_number,
         args.require_device,
         args.video_device.as_deref(),
         args.delay,

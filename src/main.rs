@@ -234,7 +234,14 @@ fn turn_on_all_supported_devices_and_log(
             );
             
             // Ignore errors for individual devices when targeting multiple
-            let _ = device_handle.set_on(true);
+            if let Err(e) = device_handle.set_on(true) {
+                warn!(
+                    "Failed to turn on {} device (serial number: {}): {}",
+                    device_handle.device_type(),
+                    get_serial_number_with_fallback(&device_handle),
+                    e
+                );
+            }
         }
     }
 
@@ -261,7 +268,14 @@ fn turn_off_all_supported_devices_and_log(
             );
             
             // Ignore errors for individual devices when targeting multiple
-            let _ = device_handle.set_on(false);
+            if let Err(e) = device_handle.set_on(false) {
+                warn!(
+                    "Failed to turn off {} device (serial number: {}): {}",
+                    device_handle.device_type(),
+                    get_serial_number_with_fallback(&device_handle),
+                    e
+                );
+            }
         }
     }
 

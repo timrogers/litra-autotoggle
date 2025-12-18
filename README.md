@@ -50,6 +50,7 @@ Just run `litra-autotoggle`. By default, all connected Litra devices will turn o
 
 The following arguments are supported:
 
+- `--config-file` to specify a YAML configuration file containing options (see "Using a configuration file" below)
 - `--serial-number` to point to a specific Litra device by serial number. You can get the serial number using the `litra devices` command in the [`litra`](https://github.com/timrogers/litra-rs) CLI.
 - `--device-path` to point to a specific Litra device by its path (useful for devices that don't show a serial number).
 - `--device-type` to point to a specific Litra device type (`glow`, `beam` or `beam_lx`).
@@ -59,6 +60,54 @@ The following arguments are supported:
 
 > [!NOTE]
 > Only one filter (`--serial-number`, `--device-path`, or `--device-type`) can be specified at a time.
+
+### Using a configuration file
+
+Instead of passing arguments on the command line, you can use a YAML configuration file with the `--config-file` option. This is particularly useful when running `litra-autotoggle` as a background service.
+
+Create a YAML file (e.g., `config.yaml`) with your desired options:
+
+```yaml
+# Target a specific device type
+device_type: "glow"
+
+# Enable verbose logging
+verbose: true
+
+# Set a custom delay
+delay: 2000
+
+# Require a device to be present
+require_device: true
+
+# Linux only: specify video device
+# video_device: "/dev/video0"
+```
+
+Then run:
+
+```bash
+litra-autotoggle --config-file config.yaml
+```
+
+**Available configuration options:**
+
+All command-line options can be specified in the configuration file using underscored names:
+
+- `serial_number` (string)
+- `device_path` (string)
+- `device_type` (string: `glow`, `beam`, or `beam_lx`)
+- `require_device` (boolean)
+- `video_device` (string, Linux only)
+- `delay` (number, in milliseconds)
+- `verbose` (boolean)
+
+**Important notes:**
+
+- Command-line arguments take precedence over configuration file values
+- The configuration file is strictly validated - unknown fields or invalid values will cause an error
+- Only one filter (`serial_number`, `device_path`, or `device_type`) can be specified in the config file
+- See [`example-config.yaml`](example-config.yaml) for a complete example with all available options
 
 ## Configuring `udev` permissions (Linux only)
 

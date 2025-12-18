@@ -5,7 +5,10 @@ use litra::{Device, DeviceError, DeviceHandle, Litra};
 #[cfg(target_os = "macos")]
 use log::debug;
 use log::{error, info, warn};
+use serde::{Deserialize, Serialize};
 use std::fmt;
+use std::fs;
+use std::path::PathBuf;
 use std::process::ExitCode;
 #[cfg(target_os = "macos")]
 use std::process::Stdio;
@@ -16,10 +19,45 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::Mutex;
 
+/// Configuration structure for YAML file deserialization.
+/// Field names use underscores to match YAML convention (e.g. serial_number).
+#[derive(Debug, Deserialize, Serialize, Default)]
+#[serde(deny_unknown_fields)]
+struct Config {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    serial_number: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    device_path: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    device_type: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    require_device: Option<bool>,
+
+    #[cfg(target_os = "linux")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    video_device: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    delay: Option<u64>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    verbose: Option<bool>,
+}
+
 /// Automatically turn your Logitech Litra device on when your webcam turns on, and off when your webcam turns off (macOS and Linux only).
 #[derive(Debug, Parser)]
 #[clap(name = "litra-autotoggle", version)]
 struct Cli {
+    #[clap(
+        long,
+        short = 'c',
+        help = "Path to a YAML configuration file. Configuration values can be specified in the file with underscored names (e.g. serial_number). Command line arguments take precedence over config file values."
+    )]
+    config_file: Option<PathBuf>,
+
     #[clap(
         long,
         short,
@@ -104,6 +142,8 @@ enum CliError {
     NoDevicesFound,
     DeviceNotFound(String),
     MultipleFiltersSpecified,
+    ConfigFileError(String),
+    InvalidDeviceType(String),
 }
 
 impl fmt::Display for CliError {
@@ -119,6 +159,11 @@ impl fmt::Display for CliError {
             CliError::MultipleFiltersSpecified => write!(
                 f,
                 "Only one filter (--serial-number, --device-path, or --device-type) can be specified at a time."
+            ),
+            CliError::ConfigFileError(error) => write!(f, "Configuration file error: {error}"),
+            CliError::InvalidDeviceType(device_type) => write!(
+                f,
+                "Invalid device type '{device_type}'. Must be one of: glow, beam, beam_lx"
             ),
         }
     }
@@ -158,6 +203,81 @@ fn validate_single_filter(
     } else {
         Ok(())
     }
+}
+
+/// Validates that device_type is one of the allowed values
+fn validate_device_type(device_type: &str) -> Result<(), CliError> {
+    match device_type {
+        "glow" | "beam" | "beam_lx" => Ok(()),
+        _ => Err(CliError::InvalidDeviceType(device_type.to_string())),
+    }
+}
+
+/// Loads and validates the configuration from a YAML file
+fn load_config_file(config_path: &PathBuf) -> Result<Config, CliError> {
+    // Read the file
+    let contents = fs::read_to_string(config_path)
+        .map_err(|e| CliError::ConfigFileError(format!("Failed to read config file: {}", e)))?;
+
+    // Parse YAML
+    let config: Config = serde_yaml::from_str(&contents)
+        .map_err(|e| CliError::ConfigFileError(format!("Failed to parse YAML: {}", e)))?;
+
+    // Validate device_type if specified
+    if let Some(ref device_type) = config.device_type {
+        validate_device_type(device_type)?;
+    }
+
+    // Validate that only one filter is specified in config
+    validate_single_filter(
+        config.serial_number.as_deref(),
+        config.device_path.as_deref(),
+        config.device_type.as_deref(),
+    )?;
+
+    Ok(config)
+}
+
+/// Merges CLI arguments with config file values.
+/// CLI arguments take precedence over config file values.
+fn merge_config_with_cli(mut cli: Cli) -> Result<Cli, CliError> {
+    if let Some(config_path) = &cli.config_file {
+        let config = load_config_file(config_path)?;
+
+        // Merge values - CLI takes precedence
+        if cli.serial_number.is_none() {
+            cli.serial_number = config.serial_number;
+        }
+        if cli.device_path.is_none() {
+            cli.device_path = config.device_path;
+        }
+        if cli.device_type.is_none() {
+            cli.device_type = config.device_type;
+        }
+        if !cli.require_device {
+            cli.require_device = config.require_device.unwrap_or(false);
+        }
+        #[cfg(target_os = "linux")]
+        {
+            if cli.video_device.is_none() {
+                cli.video_device = config.video_device;
+            }
+        }
+        // Only use config delay if CLI has the default value (1500)
+        if cli.delay == 1500 && config.delay.is_some() {
+            cli.delay = config.delay.unwrap();
+        }
+        if !cli.verbose {
+            cli.verbose = config.verbose.unwrap_or(false);
+        }
+    }
+
+    // Validate device_type if specified via CLI or config
+    if let Some(ref device_type) = cli.device_type {
+        validate_device_type(device_type)?;
+    }
+
+    Ok(cli)
 }
 
 fn get_all_supported_devices(
@@ -597,6 +717,15 @@ async fn handle_autotoggle_command(
 async fn main() -> ExitCode {
     let args = Cli::parse();
 
+    // Merge config file with CLI arguments (if config file is specified)
+    let args = match merge_config_with_cli(args) {
+        Ok(args) => args,
+        Err(error) => {
+            eprintln!("{error}");
+            return ExitCode::FAILURE;
+        }
+    };
+
     let log_level = if args.verbose { "debug" } else { "info" };
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(log_level)).init();
 
@@ -622,6 +751,15 @@ async fn main() -> ExitCode {
 async fn main() -> ExitCode {
     let args = Cli::parse();
 
+    // Merge config file with CLI arguments (if config file is specified)
+    let args = match merge_config_with_cli(args) {
+        Ok(args) => args,
+        Err(error) => {
+            eprintln!("{error}");
+            return ExitCode::FAILURE;
+        }
+    };
+
     let log_level = if args.verbose { "debug" } else { "info" };
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(log_level)).init();
 
@@ -639,5 +777,223 @@ async fn main() -> ExitCode {
         ExitCode::FAILURE
     } else {
         ExitCode::SUCCESS
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+
+    /// Helper function to create a temporary YAML file with given content
+    fn create_temp_config(content: &str) -> NamedTempFile {
+        let mut file = NamedTempFile::new().expect("Failed to create temp file");
+        file.write_all(content.as_bytes())
+            .expect("Failed to write to temp file");
+        file.flush().expect("Failed to flush temp file");
+        file
+    }
+
+    #[test]
+    fn test_load_valid_config_all_fields() {
+        let config_content = r#"
+serial_number: "ABC123"
+delay: 2000
+verbose: true
+require_device: true
+"#;
+        let temp_file = create_temp_config(config_content);
+        let config = load_config_file(&temp_file.path().to_path_buf()).unwrap();
+
+        assert_eq!(config.serial_number, Some("ABC123".to_string()));
+        assert_eq!(config.delay, Some(2000));
+        assert_eq!(config.verbose, Some(true));
+        assert_eq!(config.require_device, Some(true));
+    }
+
+    #[test]
+    fn test_load_valid_config_device_type_glow() {
+        let config_content = r#"
+device_type: "glow"
+"#;
+        let temp_file = create_temp_config(config_content);
+        let config = load_config_file(&temp_file.path().to_path_buf()).unwrap();
+
+        assert_eq!(config.device_type, Some("glow".to_string()));
+    }
+
+    #[test]
+    fn test_load_valid_config_device_type_beam() {
+        let config_content = r#"
+device_type: "beam"
+"#;
+        let temp_file = create_temp_config(config_content);
+        let config = load_config_file(&temp_file.path().to_path_buf()).unwrap();
+
+        assert_eq!(config.device_type, Some("beam".to_string()));
+    }
+
+    #[test]
+    fn test_load_valid_config_device_type_beam_lx() {
+        let config_content = r#"
+device_type: "beam_lx"
+"#;
+        let temp_file = create_temp_config(config_content);
+        let config = load_config_file(&temp_file.path().to_path_buf()).unwrap();
+
+        assert_eq!(config.device_type, Some("beam_lx".to_string()));
+    }
+
+    #[test]
+    fn test_load_valid_config_device_path() {
+        let config_content = r#"
+device_path: "/dev/hidraw0"
+"#;
+        let temp_file = create_temp_config(config_content);
+        let config = load_config_file(&temp_file.path().to_path_buf()).unwrap();
+
+        assert_eq!(config.device_path, Some("/dev/hidraw0".to_string()));
+    }
+
+    #[test]
+    fn test_load_valid_config_empty() {
+        let config_content = "";
+        let temp_file = create_temp_config(config_content);
+        let config = load_config_file(&temp_file.path().to_path_buf()).unwrap();
+
+        assert_eq!(config.serial_number, None);
+        assert_eq!(config.device_type, None);
+        assert_eq!(config.device_path, None);
+    }
+
+    #[test]
+    fn test_load_invalid_config_unknown_field() {
+        let config_content = r#"
+device_type: "glow"
+unknown_field: "value"
+"#;
+        let temp_file = create_temp_config(config_content);
+        let result = load_config_file(&temp_file.path().to_path_buf());
+
+        assert!(result.is_err());
+        match result {
+            Err(CliError::ConfigFileError(msg)) => {
+                assert!(msg.contains("unknown field"));
+                assert!(msg.contains("unknown_field"));
+            }
+            _ => panic!("Expected ConfigFileError with unknown field message"),
+        }
+    }
+
+    #[test]
+    fn test_load_invalid_config_invalid_device_type() {
+        let config_content = r#"
+device_type: "invalid_type"
+"#;
+        let temp_file = create_temp_config(config_content);
+        let result = load_config_file(&temp_file.path().to_path_buf());
+
+        assert!(result.is_err());
+        match result {
+            Err(CliError::InvalidDeviceType(device_type)) => {
+                assert_eq!(device_type, "invalid_type");
+            }
+            _ => panic!("Expected InvalidDeviceType error"),
+        }
+    }
+
+    #[test]
+    fn test_load_invalid_config_multiple_filters() {
+        let config_content = r#"
+serial_number: "ABC123"
+device_type: "glow"
+"#;
+        let temp_file = create_temp_config(config_content);
+        let result = load_config_file(&temp_file.path().to_path_buf());
+
+        assert!(result.is_err());
+        match result {
+            Err(CliError::MultipleFiltersSpecified) => {}
+            _ => panic!("Expected MultipleFiltersSpecified error"),
+        }
+    }
+
+    #[test]
+    fn test_load_invalid_config_invalid_yaml() {
+        let config_content = r#"
+device_type: [invalid
+"#;
+        let temp_file = create_temp_config(config_content);
+        let result = load_config_file(&temp_file.path().to_path_buf());
+
+        assert!(result.is_err());
+        match result {
+            Err(CliError::ConfigFileError(msg)) => {
+                assert!(msg.contains("Failed to parse YAML"));
+            }
+            _ => panic!("Expected ConfigFileError with YAML parse error"),
+        }
+    }
+
+    #[test]
+    fn test_load_config_file_not_found() {
+        let result = load_config_file(&PathBuf::from("/nonexistent/path/config.yaml"));
+
+        assert!(result.is_err());
+        match result {
+            Err(CliError::ConfigFileError(msg)) => {
+                assert!(msg.contains("Failed to read config file"));
+            }
+            _ => panic!("Expected ConfigFileError with read error"),
+        }
+    }
+
+    #[test]
+    fn test_validate_device_type_valid() {
+        assert!(validate_device_type("glow").is_ok());
+        assert!(validate_device_type("beam").is_ok());
+        assert!(validate_device_type("beam_lx").is_ok());
+    }
+
+    #[test]
+    fn test_validate_device_type_invalid() {
+        assert!(validate_device_type("invalid").is_err());
+        assert!(validate_device_type("").is_err());
+        assert!(validate_device_type("GLOW").is_err()); // Case sensitive
+    }
+
+    #[test]
+    fn test_validate_single_filter_none() {
+        assert!(validate_single_filter(None, None, None).is_ok());
+    }
+
+    #[test]
+    fn test_validate_single_filter_one() {
+        assert!(validate_single_filter(Some("serial"), None, None).is_ok());
+        assert!(validate_single_filter(None, Some("path"), None).is_ok());
+        assert!(validate_single_filter(None, None, Some("glow")).is_ok());
+    }
+
+    #[test]
+    fn test_validate_single_filter_multiple() {
+        assert!(validate_single_filter(Some("serial"), Some("path"), None).is_err());
+        assert!(validate_single_filter(Some("serial"), None, Some("glow")).is_err());
+        assert!(validate_single_filter(None, Some("path"), Some("glow")).is_err());
+        assert!(validate_single_filter(Some("serial"), Some("path"), Some("glow")).is_err());
+    }
+
+    #[test]
+    fn test_config_deserialization_with_comments() {
+        let config_content = r#"
+# This is a comment
+device_type: "glow"  # inline comment
+delay: 2000
+"#;
+        let temp_file = create_temp_config(config_content);
+        let config = load_config_file(&temp_file.path().to_path_buf()).unwrap();
+
+        assert_eq!(config.device_type, Some("glow".to_string()));
+        assert_eq!(config.delay, Some(2000));
     }
 }

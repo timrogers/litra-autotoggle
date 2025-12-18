@@ -1,6 +1,6 @@
 [package]
 name = "litra-autotoggle"
-version = "0.7.0"
+version = "1.0.0-rc1"
 edition = "2021"
 authors = ["Tim Rogers <timrogers@github.com>"]
 description = "Automatically turn your Logitech Litra device on when your webcam turns on, and off when your webcam turns off (macOS and Linux only)"

@@ -1,0 +1,23 @@
+# Example configuration file for litra-autotoggle
+# All fields are optional - only specify what you need
+
+# Target a specific device by serial number
+# serial_number: "ABC123"
+
+# Target a specific device by path
+# device_path: "/dev/hidraw0"
+
+# Target a specific device type (glow, beam, or beam_lx)
+device_type: "glow"
+
+# Exit with error if no device is found (default: false)
+require_device: true
+
+# Delay in milliseconds before toggling (default: 1500)
+delay: 2000
+
+# Enable verbose logging (default: false)
+verbose: true
+
+# Linux only: specify the video device to monitor
+# video_device: "/dev/video0"

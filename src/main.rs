@@ -224,8 +224,14 @@ fn turn_on_all_supported_devices_and_log(
     device_type: Option<&str>,
     require_device: bool,
 ) -> Result<(), CliError> {
-    let device_handles = get_all_supported_devices(context, serial_number, device_path, device_type, require_device)?;
-    
+    let device_handles = get_all_supported_devices(
+        context,
+        serial_number,
+        device_path,
+        device_type,
+        require_device,
+    )?;
+
     if device_handles.is_empty() {
         print_device_not_found_log(serial_number);
     } else {
@@ -235,7 +241,7 @@ fn turn_on_all_supported_devices_and_log(
                 device_handle.device_type(),
                 get_serial_number_with_fallback(&device_handle)
             );
-            
+
             // Ignore errors for individual devices when targeting multiple
             if let Err(e) = device_handle.set_on(true) {
                 warn!(
@@ -258,8 +264,14 @@ fn turn_off_all_supported_devices_and_log(
     device_type: Option<&str>,
     require_device: bool,
 ) -> Result<(), CliError> {
-    let device_handles = get_all_supported_devices(context, serial_number, device_path, device_type, require_device)?;
-    
+    let device_handles = get_all_supported_devices(
+        context,
+        serial_number,
+        device_path,
+        device_type,
+        require_device,
+    )?;
+
     if device_handles.is_empty() {
         print_device_not_found_log(serial_number);
     } else {
@@ -269,7 +281,7 @@ fn turn_off_all_supported_devices_and_log(
                 device_handle.device_type(),
                 get_serial_number_with_fallback(&device_handle)
             );
-            
+
             // Ignore errors for individual devices when targeting multiple
             if let Err(e) = device_handle.set_on(false) {
                 warn!(
@@ -317,7 +329,13 @@ async fn handle_autotoggle_command(
     // Use context inside an async block with locking
     {
         let mut context_lock = context.lock().await;
-        let device_handles = get_all_supported_devices(&mut context_lock, serial_number, device_path, device_type, require_device)?;
+        let device_handles = get_all_supported_devices(
+            &mut context_lock,
+            serial_number,
+            device_path,
+            device_type,
+            require_device,
+        )?;
         if device_handles.is_empty() {
             print_device_not_found_log(serial_number);
         } else {
@@ -444,7 +462,13 @@ async fn handle_autotoggle_command(
     // Use context inside an async block with locking
     {
         let mut context_lock = context.lock().await;
-        let device_handles = get_all_supported_devices(&mut context_lock, serial_number, device_path, device_type, require_device)?;
+        let device_handles = get_all_supported_devices(
+            &mut context_lock,
+            serial_number,
+            device_path,
+            device_type,
+            require_device,
+        )?;
         if device_handles.is_empty() {
             print_device_not_found_log(serial_number);
         } else {

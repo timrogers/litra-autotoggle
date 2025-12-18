@@ -37,7 +37,9 @@ The following Logitech Litra devices, **connected via USB**, are supported:
 
 Run `brew services start timrogers/tap/litra-autotoggle`.
 
-`litra-autotoggle` will run in the background, and your Litra will turn on when your webcam turns on, and off when your webcam turns off. If no Litra device is connected, the listener will keep on running, but will do nothing.
+`litra-autotoggle` will run in the background, and all connected Litra devices will turn on when your webcam turns on, and off when your webcam turns off. If no Litra device is connected, the listener will keep on running, but will do nothing.
+
+To customize the background service's configuration, edit the config file at `$(brew --prefix)/etc/litra-autotoggle.yml`. For information on how `litra-autotoggle` config files work, see "Using a configuration file" below. To validate your config file, run `litra-autotoggle --config-file $(brew --prefix)/etc/litra-autotoggle.yml`.
 
 > [!NOTE]
 > When starting the service for the first time on a macOS device, you will receive a notification warning you about software running in the background.
@@ -65,7 +67,7 @@ The following arguments are supported:
 
 Instead of passing arguments on the command line, you can use a YAML configuration file with the `--config-file` option. This is particularly useful when running `litra-autotoggle` as a background service.
 
-Create a YAML file (e.g., `config.yaml`) with your desired options:
+Create a YAML file (e.g., `config.yml`) with your desired options:
 
 ```yaml
 # Target a specific device type
@@ -87,7 +89,7 @@ require_device: true
 Then run:
 
 ```bash
-litra-autotoggle --config-file config.yaml
+litra-autotoggle --config-file config.yml
 ```
 
 **Available configuration options:**
@@ -107,7 +109,7 @@ All command-line options can be specified in the configuration file using unders
 - Command-line arguments take precedence over configuration file values
 - The configuration file is strictly validated - unknown fields or invalid values will cause an error
 - Only one filter (`serial_number`, `device_path`, or `device_type`) can be specified in the config file
-- See [`example-config.yaml`](example-config.yaml) for a complete example with all available options
+- See [`example-config.yml`](example-config.yml) for a complete example with all available options
 
 ## Configuring `udev` permissions (Linux only)
 

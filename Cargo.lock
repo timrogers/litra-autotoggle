@@ -569,7 +569,7 @@ dependencies = [
 
 [[package]]
 name = "litra-autotoggle"
-version = "0.7.0"
+version = "1.0.0-rc1"
 dependencies = [
  "clap",
  "env_logger",

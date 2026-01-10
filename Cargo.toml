@@ -10,11 +10,6 @@ readme = "README.md"
 categories = ["hardware-support", "command-line-utilities"]
 keywords = ["logitech", "litra", "glow", "beam", "light"]
 
-# TODO: Remove this once we're on a newer tokio version that doesn't trip this up
-# https://github.com/tokio-rs/tokio/pull/6874
-[lints.clippy]
-needless_return = "allow"
-
 [[bin]]
 name = "litra-autotoggle"
 path = "src/main.rs"

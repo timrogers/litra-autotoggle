@@ -794,10 +794,14 @@ async fn handle_autotoggle_command(
                                     }
                                 }
                             }
+                            if any_camera_active {
+                                break;
+                            }
                         } else {
                             // Regular packaged apps
                             if is_camera_active(&app_key) {
                                 any_camera_active = true;
+                                break;
                             }
                         }
                     }

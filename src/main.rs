@@ -763,7 +763,7 @@ async fn handle_autotoggle_command(
 
     // Add variables for throttling
     let mut pending_action: Option<tokio::task::JoinHandle<()>> = None;
-    let desired_state = std::sync::Arc::new(tokio::sync::Mutex::new(None));
+    let desired_state = Arc::new(tokio::sync::Mutex::new(None));
     
     // Track previous camera state
     let mut previous_camera_in_use = false;
@@ -800,10 +800,6 @@ async fn handle_autotoggle_command(
                                 break;
                             }
                         }
-                    }
-
-                    if any_camera_active {
-                        break;
                     }
                 }
 

@@ -1,6 +1,6 @@
 # `litra-autotoggle`
 
-💡 Automatically turn your Logitech Litra device on when your webcam turns on, and off when your webcam turns off (macOS and Linux only)
+💡 Automatically turn your Logitech Litra device on when your webcam turns on, and off when your webcam turns off
 
 ---
 
@@ -30,6 +30,12 @@ The following Logitech Litra devices, **connected via USB**, are supported:
 1. Download the [latest release](https://github.com/timrogers/litra-autotoggle/releases/latest) for your platform. macOS and Linux devices are supported.
 1. Add the binary to `$PATH`, so you can execute it from your shell. For the best experience, call it `litra-autotoggle`.
 1. Run `litra-autotoggle --help` to check that everything is working.
+
+### Windows via direct binary download
+
+1. Download the [latest release](https://github.com/timrogers/litra-autotoggle/releases/latest) for Windows (e.g., `litra-autotoggle_v1.0.0_windows-amd64.exe`).
+1. Rename the binary to `litra-autotoggle.exe` and place it in a directory that's in your `PATH` environment variable.
+1. Open Command Prompt or PowerShell and run `litra-autotoggle --help` to check that everything is working.
 
 ## Usage
 
@@ -121,3 +127,17 @@ Next, reboot your computer or run the following commands as `root`:
 
     # udevadm control --reload-rules
     # udevadm trigger
+
+## How it works
+
+### macOS
+
+On macOS, the application monitors the system log for events from the AVCapture framework that indicate when the webcam starts or stops running.
+
+### Linux
+
+On Linux, the application uses `inotify` to watch for open/close events on video device files in `/dev` (e.g., `/dev/video0`).
+
+### Windows
+
+On Windows, the application uses Windows Media Foundation APIs to periodically enumerate camera devices and detect when cameras become active or inactive. The application polls for camera state changes every second.

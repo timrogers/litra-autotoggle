@@ -797,9 +797,12 @@ async fn handle_autotoggle_command(
                             // Regular packaged apps
                             if is_camera_active(&app_key) {
                                 any_camera_active = true;
-                                break;
                             }
                         }
+                    }
+
+                    if any_camera_active {
+                        break;
                     }
                 }
 

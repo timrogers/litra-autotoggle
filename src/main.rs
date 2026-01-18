@@ -18,6 +18,22 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 #[cfg(target_os = "macos")]
 use tokio::process::Command;
 use tokio::sync::Mutex;
+#[cfg(target_os = "windows")]
+use windows::Win32::Devices::Enumeration::Pnp::{
+    SwDeviceCapabilitiesNone, SwDeviceCapabilities, SW_DEVICE_CREATE_INFO,
+};
+#[cfg(target_os = "windows")]
+use windows::Win32::Foundation::{HANDLE, PWSTR, BOOL};
+#[cfg(target_os = "windows")]
+use windows::Win32::Media::MediaFoundation::{
+    MFCreateAttributes, MFEnumDeviceSources, MFMediaType_Video, MFStartup,
+    IMFActivate, IMFAttributes, MFSTARTUP_FULL, MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE,
+    MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_GUID,
+};
+#[cfg(target_os = "windows")]
+use windows::Win32::System::Com::{
+    CoInitializeEx, CoUninitialize, COINIT_MULTITHREADED,
+};
 
 /// Configuration structure for YAML file deserialization.
 /// Field names use underscores to match YAML convention (e.g. serial_number).
@@ -47,7 +63,7 @@ struct Config {
     verbose: Option<bool>,
 }
 
-/// Automatically turn your Logitech Litra device on when your webcam turns on, and off when your webcam turns off (macOS and Linux only).
+/// Automatically turn your Logitech Litra device on when your webcam turns on, and off when your webcam turns off.
 #[derive(Debug, Parser)]
 #[clap(name = "litra-autotoggle", version)]
 struct Cli {
@@ -712,6 +728,158 @@ async fn handle_autotoggle_command(
     }
 }
 
+#[cfg(target_os = "windows")]
+async fn handle_autotoggle_command(
+    serial_number: Option<&str>,
+    device_path: Option<&str>,
+    device_type: Option<&str>,
+    require_device: bool,
+    delay: u64,
+) -> CliResult {
+    use std::time::Duration;
+    
+    // Initialize COM for this thread
+    unsafe {
+        CoInitializeEx(None, COINIT_MULTITHREADED)
+            .map_err(|e| CliError::IoError(std::io::Error::other(format!("Failed to initialize COM: {:?}", e))))?;
+    }
+
+    // Initialize Media Foundation
+    unsafe {
+        MFStartup(0x00020070, MFSTARTUP_FULL)
+            .map_err(|e| CliError::IoError(std::io::Error::other(format!("Failed to initialize Media Foundation: {:?}", e))))?;
+    }
+
+    // Wrap context in Arc<Mutex<>> to enable sharing across tasks
+    let context = Arc::new(Mutex::new(Litra::new()?));
+
+    // Use context inside an async block with locking
+    {
+        let mut context_lock = context.lock().await;
+        let device_handles = get_all_supported_devices(
+            &mut context_lock,
+            serial_number,
+            device_path,
+            device_type,
+            require_device,
+        )?;
+        if device_handles.is_empty() {
+            print_device_not_found_log(serial_number);
+        } else {
+            for device_handle in device_handles {
+                info!(
+                    "Found {} device (serial number: {})",
+                    device_handle.device_type(),
+                    get_serial_number_with_fallback(&device_handle)
+                );
+            }
+        }
+    }
+
+    info!("Starting Windows camera monitoring...");
+
+    // Add variables for throttling
+    let mut pending_action: Option<tokio::task::JoinHandle<()>> = None;
+    let desired_state = Arc::new(tokio::sync::Mutex::new(None));
+    
+    let mut previous_camera_count = 0;
+
+    loop {
+        // Enumerate camera devices using Media Foundation
+        let camera_count = unsafe {
+            let attributes: IMFAttributes = MFCreateAttributes(1)
+                .map_err(|e| CliError::IoError(std::io::Error::other(format!("Failed to create attributes: {:?}", e))))?;
+            
+            attributes.SetGUID(
+                &MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE,
+                &MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_GUID,
+            ).map_err(|e| CliError::IoError(std::io::Error::other(format!("Failed to set GUID: {:?}", e))))?;
+
+            let mut devices: *mut Option<IMFActivate> = std::ptr::null_mut();
+            let mut count: u32 = 0;
+
+            MFEnumDeviceSources(&attributes, &mut devices, &mut count)
+                .map_err(|e| CliError::IoError(std::io::Error::other(format!("Failed to enumerate devices: {:?}", e))))?;
+
+            // Clean up the device array
+            if !devices.is_null() && count > 0 {
+                let devices_slice = std::slice::from_raw_parts(devices, count as usize);
+                for i in 0..count as usize {
+                    if let Some(ref device) = devices_slice[i] {
+                        let _ = device.ShutdownObject();
+                    }
+                }
+                windows::Win32::System::Com::CoTaskMemFree(Some(devices as *const _));
+            }
+
+            count as usize
+        };
+
+        // Detect state changes
+        if camera_count != previous_camera_count {
+            if camera_count > 0 && previous_camera_count == 0 {
+                info!("Detected that a video device has been turned on.");
+                let mut state = desired_state.lock().await;
+                *state = Some(true);
+            } else if camera_count == 0 && previous_camera_count > 0 {
+                info!("Detected that a video device has been turned off.");
+                let mut state = desired_state.lock().await;
+                *state = Some(false);
+            }
+
+            previous_camera_count = camera_count;
+
+            // Cancel any pending action
+            if let Some(handle) = pending_action.take() {
+                handle.abort();
+            }
+
+            // Clone variables for the async task
+            let desired_state_clone = desired_state.clone();
+            let context_clone = context.clone();
+            let serial_number_clone = serial_number.map(|s| s.to_string());
+            let device_path_clone = device_path.map(|s| s.to_string());
+            let device_type_clone = device_type.map(|s| s.to_string());
+
+            // Start a new delayed action
+            pending_action = Some(tokio::spawn(async move {
+                tokio::time::sleep(tokio::time::Duration::from_millis(delay)).await;
+
+                let state = {
+                    let mut state = desired_state_clone.lock().await;
+                    state.take()
+                };
+
+                if let Some(state) = state {
+                    let mut context_lock = context_clone.lock().await;
+                    if state {
+                        info!("Attempting to turn on Litra device(s)...");
+                        let _ = turn_on_all_supported_devices_and_log(
+                            &mut context_lock,
+                            serial_number_clone.as_deref(),
+                            device_path_clone.as_deref(),
+                            device_type_clone.as_deref(),
+                            require_device,
+                        );
+                    } else {
+                        info!("Attempting to turn off Litra device(s)...");
+                        let _ = turn_off_all_supported_devices_and_log(
+                            &mut context_lock,
+                            serial_number_clone.as_deref(),
+                            device_path_clone.as_deref(),
+                            device_type_clone.as_deref(),
+                            require_device,
+                        );
+                    }
+                }
+            }));
+        }
+
+        // Sleep before checking again (poll every second)
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+}
+
 #[cfg(target_os = "macos")]
 #[tokio::main]
 async fn main() -> ExitCode {
@@ -774,6 +942,40 @@ async fn main() -> ExitCode {
 
     if let Err(error) = result.await {
         error!("{}", error);
+        ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
+    }
+}
+
+#[cfg(target_os = "windows")]
+#[tokio::main]
+async fn main() -> ExitCode {
+    let args = Cli::parse();
+
+    // Merge config file with CLI arguments (if config file is specified)
+    let args = match merge_config_with_cli(args) {
+        Ok(args) => args,
+        Err(error) => {
+            eprintln!("{error}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let log_level = if args.verbose { "debug" } else { "info" };
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(log_level)).init();
+
+    let result = handle_autotoggle_command(
+        args.serial_number.as_deref(),
+        args.device_path.as_deref(),
+        args.device_type.as_deref(),
+        args.require_device,
+        args.delay,
+    )
+    .await;
+
+    if let Err(error) = result {
+        error!("{error}");
         ExitCode::FAILURE
     } else {
         ExitCode::SUCCESS

@@ -36,6 +36,11 @@ jobs:
               binary_name: darwin-aarch64,
               runs_on: macos-latest,
             }
+          - {
+              target: x86_64-pc-windows-msvc,
+              binary_name: windows-amd64.exe,
+              runs_on: windows-latest,
+            }
     runs-on: ${{ matrix.job.runs_on }}
     steps:
       - name: Install rustup (self-hosted runners only)
@@ -62,6 +67,11 @@ jobs:
         run: |
           rm target/${{ matrix.job.target }}/release/litra-autotoggle.d
           cp target/${{ matrix.job.target }}/release/litra-autotoggle* litra-autotoggle_${{ steps.sanitise_ref.outputs.value }}_${{ matrix.job.binary_name }}
+        if: runner.os != 'Windows'
+      - name: Rename Windows binary to use structured filename
+        run: |
+          Copy-Item target/${{ matrix.job.target }}/release/litra-autotoggle.exe litra-autotoggle_${{ steps.sanitise_ref.outputs.value }}_${{ matrix.job.binary_name }}
+        if: runner.os == 'Windows'
       - name: Write Apple signing key to a file (macOS only)
         env:
           APPLE_SIGNING_KEY_P12: ${{ secrets.APPLE_SIGNING_KEY_P12 }}
@@ -189,6 +199,9 @@ jobs:
       - uses: actions/download-artifact@v7
         with:
           name: litra-autotoggle_${{ steps.sanitise_ref.outputs.value }}_darwin-universal
+      - uses: actions/download-artifact@v7
+        with:
+          name: litra-autotoggle_${{ steps.sanitise_ref.outputs.value }}_windows-amd64.exe
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
@@ -198,6 +211,7 @@ jobs:
             litra-autotoggle_${{ steps.sanitise_ref.outputs.value }}_linux-amd64
             litra-autotoggle_${{ steps.sanitise_ref.outputs.value }}_linux-aarch64
             litra-autotoggle_${{ steps.sanitise_ref.outputs.value }}_darwin-universal
+            litra-autotoggle_${{ steps.sanitise_ref.outputs.value }}_windows-amd64.exe
   cargo_publish:
     name: Publish with Cargo to Crates.io
     runs-on: ubuntu-latest

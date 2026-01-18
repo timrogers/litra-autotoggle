@@ -717,7 +717,8 @@ async fn handle_autotoggle_command(
 }
 
 #[cfg(target_os = "windows")]
-const WEBCAM_REGISTRY_PATH: &str = r"SOFTWARE\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\webcam";
+const WEBCAM_REGISTRY_PATH: &str =
+    r"SOFTWARE\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\webcam";
 
 #[cfg(target_os = "windows")]
 const NONPACKAGED_APPS_KEY: &str = "NonPackaged";
@@ -764,7 +765,7 @@ async fn handle_autotoggle_command(
     // Add variables for throttling
     let mut pending_action: Option<tokio::task::JoinHandle<()>> = None;
     let desired_state = Arc::new(tokio::sync::Mutex::new(None));
-    
+
     // Track previous camera state
     let mut previous_camera_in_use = false;
 
@@ -809,7 +810,10 @@ async fn handle_autotoggle_command(
                 any_camera_active
             }
             Err(e) => {
-                warn!("Failed to access webcam registry key: {}. Assuming camera is not in use.", e);
+                warn!(
+                    "Failed to access webcam registry key: {}. Assuming camera is not in use.",
+                    e
+                );
                 false
             }
         };
@@ -875,7 +879,10 @@ async fn handle_autotoggle_command(
         }
 
         // Poll every REGISTRY_POLL_INTERVAL_MS to check for camera state changes
-        tokio::time::sleep(tokio::time::Duration::from_millis(REGISTRY_POLL_INTERVAL_MS)).await;
+        tokio::time::sleep(tokio::time::Duration::from_millis(
+            REGISTRY_POLL_INTERVAL_MS,
+        ))
+        .await;
     }
 }
 

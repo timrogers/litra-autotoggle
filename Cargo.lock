@@ -315,9 +315,9 @@ checksum = "df1d3c3b53da64cf5760482273a98e575c651a67eec7f77df96b5b642de8f039"
 
 [[package]]
 name = "litra"
-version = "2.5.2"
+version = "3.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0a5bc75720f900dcfa844d67390ef1ff26e616b3423c20dcd20187b791475c7c"
+checksum = "044e1a0f758019e750b0c86b4cfdf0f6d2ab9238f2c7b9897cf604be2c9c4e21"
 dependencies = [
  "hidapi",
  "serde",

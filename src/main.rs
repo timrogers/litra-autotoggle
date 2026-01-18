@@ -717,6 +717,15 @@ async fn handle_autotoggle_command(
 }
 
 #[cfg(target_os = "windows")]
+const WEBCAM_REGISTRY_PATH: &str = r"SOFTWARE\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\webcam";
+
+#[cfg(target_os = "windows")]
+const NONPACKAGED_APPS_KEY: &str = "NonPackaged";
+
+#[cfg(target_os = "windows")]
+const REGISTRY_POLL_INTERVAL_MS: u64 = 500;
+
+#[cfg(target_os = "windows")]
 async fn handle_autotoggle_command(
     serial_number: Option<&str>,
     device_path: Option<&str>,
@@ -761,7 +770,7 @@ async fn handle_autotoggle_command(
 
     // Registry path for webcam access
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-    let webcam_path = r"SOFTWARE\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\webcam";
+    let webcam_path = WEBCAM_REGISTRY_PATH;
 
     loop {
         // Poll the registry for camera usage
@@ -773,7 +782,7 @@ async fn handle_autotoggle_command(
                 for subkey_name in webcam_key.enum_keys().filter_map(|k| k.ok()) {
                     if let Ok(app_key) = webcam_key.open_subkey(&subkey_name) {
                         // Skip the "NonPackaged" key itself, only look at its children
-                        if subkey_name == "NonPackaged" {
+                        if subkey_name == NONPACKAGED_APPS_KEY {
                             for nonpackaged_subkey in app_key.enum_keys().filter_map(|k| k.ok()) {
                                 if let Ok(nonpackaged_app_key) =
                                     app_key.open_subkey(&nonpackaged_subkey)
@@ -866,8 +875,8 @@ async fn handle_autotoggle_command(
             }));
         }
 
-        // Poll every 500ms to check for camera state changes
-        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+        // Poll every REGISTRY_POLL_INTERVAL_MS to check for camera state changes
+        tokio::time::sleep(tokio::time::Duration::from_millis(REGISTRY_POLL_INTERVAL_MS)).await;
     }
 }
 
@@ -948,9 +957,10 @@ async fn main() -> ExitCode {
         args.require_device,
         args.video_device.as_deref(),
         args.delay,
-    );
+    )
+    .await;
 
-    if let Err(error) = result.await {
+    if let Err(error) = result {
         error!("{}", error);
         ExitCode::FAILURE
     } else {

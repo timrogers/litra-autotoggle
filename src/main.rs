@@ -797,10 +797,10 @@ async fn handle_autotoggle_command(
 
             // Clean up the device array
             if !devices.is_null() && count > 0 {
-                let devices_slice = std::slice::from_raw_parts(devices, count as usize);
-                for i in 0..count as usize {
-                    if let Some(ref device) = devices_slice[i] {
-                        let _ = device.ShutdownObject();
+                let devices_slice = std::slice::from_raw_parts_mut(devices, count as usize);
+                for device in devices_slice.iter() {
+                    if let Some(ref dev) = device {
+                        let _ = dev.ShutdownObject();
                     }
                 }
                 windows::Win32::System::Com::CoTaskMemFree(Some(devices as *const _));

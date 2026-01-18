@@ -59,6 +59,7 @@ The following arguments are supported:
 - `--require-device` to enforce that a Litra device must be connected. By default, the listener will keep running even if no Litra device is found. With this set, the listener will exit whenever it looks for a Litra device and none is found.
 - `--video-device` (Linux only) to watch a specific video device (e.g. `/dev/video0`). By default, all video devices will be watched.
 - `--delay` to customize the delay (in milliseconds) between a webcam event being detected and toggling your Litra. When your webcam turns on or off, multiple events may be generated in quick succession. Setting a delay allows the program to wait for all events before taking action, avoiding flickering. Defaults to 1.5 seconds (1500 milliseconds).
+- `--verbose` to enable verbose logging
 
 > [!NOTE]
 > Only one filter (`--serial-number`, `--device-path`, or `--device-type`) can be specified at a time.

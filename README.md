@@ -71,20 +71,32 @@ Instead of passing arguments on the command line, you can use a YAML configurati
 Create a YAML file (e.g., `config.yml`) with your desired options:
 
 ```yaml
-# Target a specific device type
-device_type: "glow"
-
-# Enable verbose logging
-verbose: true
-
-# Set a custom delay
-delay: 2000
-
-# Require a device to be present
-require_device: true
-
-# Linux only: specify video device
-# video_device: "/dev/video0"
+# By default, the tool will control all connected Litra devices. You can specify ONE
+# of the below filters to limit which device(s) it will control.
+#
+# device_type: glow
+# serial_number: ABCD1
+# device_path: DevSrvsID:4296789687
+#
+# By default, the tool will watch all connected video devices. On Linux, you can limit
+# this to one specific device by specifying its path below.
+#
+# video_device: /dev/video0
+#
+# By default, the tool will wait 1.5 seconds after a video device event before toggling
+# the light to reduce flickering. You can adjust this delay (in milliseconds) below.
+#
+# delay: 2000
+#
+# By default, if no Litra devices are found, the tool will keep running. You can change this
+# behavior by setting the option below to true.
+#
+# require_device: true
+#
+# By default, the tool emits simple logs. You can enable debug logging by setting the option
+# below to true.
+#
+# verbose: true
 ```
 
 Then run:
@@ -110,7 +122,7 @@ All command-line options can be specified in the configuration file using unders
 - Command-line arguments take precedence over configuration file values
 - The configuration file is strictly validated - unknown fields or invalid values will cause an error
 - Only one filter (`serial_number`, `device_path`, or `device_type`) can be specified in the config file
-- See [`example-config.yml`](example-config.yml) for a complete example with all available options
+- See [`litra-autotoggle.example.yml`](litra-autotoggle.example.yml) for a complete example with all available options
 
 ## Configuring `udev` permissions (Linux only)
 

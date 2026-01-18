@@ -1,0 +1,39 @@
+# ----------------
+# * INTRODUCTION *
+# ----------------
+# You can configure litra-autotoggle by specifying command line arguments directly
+# (e.g. `--device-type glow`), or you can use a YML configuration file like this one
+# and pass its path in the `--config-file` argument.
+#
+# The Homebrew service, started with `brew services start litra-autotoggle`,
+# automatically uses a config file located at `$(brew --prefix)/etc/litra-autotoggle.yml`.
+#
+# -------------------------
+# * CONFIGURATION OPTIONS *
+# -------------------------
+# By default, the tool will control all connected Litra devices. You can specify ONE
+# of the below filters to limit which device(s) it will control.
+#
+# device_type: glow
+# serial_number: ABCD1
+# device_path: DevSrvsID:4296789687
+#
+# By default, the tool will watch all connected video devices. On Linux, you can limit
+# this to one specific device by specifying its path below.
+#
+# video_device: /dev/video0
+#
+# By default, the tool will wait 1.5 seconds after a video device event before toggling
+# the light to reduce flickering. You can adjust this delay (in milliseconds) below.
+#
+# delay: 2000
+#
+# By default, if no Litra devices are found, the tool will keep running. You can change this
+# behavior by setting the option below to true.
+#
+# require_device: true
+#
+# By default, the tool emits simple logs. You can enable debug logging by setting the option
+# below to true.
+#
+# verbose: true

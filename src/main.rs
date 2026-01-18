@@ -19,20 +19,14 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::Mutex;
 #[cfg(target_os = "windows")]
-use windows::Win32::Devices::Enumeration::Pnp::{
-    SwDeviceCapabilitiesNone, SwDeviceCapabilities, SW_DEVICE_CREATE_INFO,
-};
-#[cfg(target_os = "windows")]
-use windows::Win32::Foundation::{HANDLE, PWSTR, BOOL};
-#[cfg(target_os = "windows")]
 use windows::Win32::Media::MediaFoundation::{
-    MFCreateAttributes, MFEnumDeviceSources, MFMediaType_Video, MFStartup,
+    MFCreateAttributes, MFEnumDeviceSources, MFStartup, MF_VERSION,
     IMFActivate, IMFAttributes, MFSTARTUP_FULL, MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE,
     MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_GUID,
 };
 #[cfg(target_os = "windows")]
 use windows::Win32::System::Com::{
-    CoInitializeEx, CoUninitialize, COINIT_MULTITHREADED,
+    CoInitializeEx, COINIT_MULTITHREADED,
 };
 
 /// Configuration structure for YAML file deserialization.
@@ -746,7 +740,7 @@ async fn handle_autotoggle_command(
 
     // Initialize Media Foundation
     unsafe {
-        MFStartup(0x00020070, MFSTARTUP_FULL)
+        MFStartup(MF_VERSION, MFSTARTUP_FULL)
             .map_err(|e| CliError::IoError(std::io::Error::other(format!("Failed to initialize Media Foundation: {:?}", e))))?;
     }
 

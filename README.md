@@ -1,6 +1,6 @@
 # `litra-autotoggle`
 
-💡 Automatically turn your Logitech Litra device on when your webcam turns on, and off when your webcam turns off (macOS and Linux only)
+💡 Automatically turn your Logitech Litra device on when your webcam turns on, and off when your webcam turns off (macOS, Linux, and Windows)
 
 ---
 
@@ -19,16 +19,16 @@ The following Logitech Litra devices, **connected via USB**, are supported:
 1. Install the latest version of `litra-autotoggle` by running `brew tap timrogers/tap && brew install litra-autotoggle`.
 1. Run `litra-autotoggle --help` to check that everything is working.
 
-### macOS or Linux via [Cargo](https://doc.rust-lang.org/cargo/), Rust's package manager
+### macOS, Linux, or Windows via [Cargo](https://doc.rust-lang.org/cargo/), Rust's package manager
 
 1. Install [Rust](https://www.rust-lang.org/tools/install) on your machine, if it isn't already installed.
 1. Install the `litra-autotoggle` crate by running `cargo install litra-autotoggle`.
 1. Run `litra-autotoggle --help` to check that everything is working and see the available commands.
 
-### macOS or Linux via direct binary download
+### macOS, Linux, or Windows via direct binary download
 
-1. Download the [latest release](https://github.com/timrogers/litra-autotoggle/releases/latest) for your platform. macOS and Linux devices are supported.
-1. Add the binary to `$PATH`, so you can execute it from your shell. For the best experience, call it `litra-autotoggle`.
+1. Download the [latest release](https://github.com/timrogers/litra-autotoggle/releases/latest) for your platform. macOS, Linux, and Windows devices are supported.
+1. Add the binary to your `PATH` (or `$PATH` on Unix-like systems), so you can execute it from your shell/terminal. For the best experience, call it `litra-autotoggle` (or `litra-autotoggle.exe` on Windows).
 1. Run `litra-autotoggle --help` to check that everything is working.
 
 ## Usage
@@ -121,3 +121,15 @@ Next, reboot your computer or run the following commands as `root`:
 
     # udevadm control --reload-rules
     # udevadm trigger
+
+## Windows-specific notes
+
+On Windows, `litra-autotoggle` monitors camera usage by polling the Windows registry. The application checks the registry path:
+
+```
+HKEY_CURRENT_USER\SOFTWARE\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\webcam
+```
+
+The registry contains entries for each application that has accessed the camera, with `LastUsedTimeStart` and `LastUsedTimeStop` timestamps. The camera is considered active when any application has a `LastUsedTimeStart` timestamp greater than its `LastUsedTimeStop` timestamp.
+
+The application polls the registry every 500ms for changes. This approach is compatible with all Windows applications that use the standard camera APIs.

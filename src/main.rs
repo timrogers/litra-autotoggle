@@ -18,6 +18,10 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 #[cfg(target_os = "macos")]
 use tokio::process::Command;
 use tokio::sync::Mutex;
+#[cfg(target_os = "windows")]
+use winreg::enums::*;
+#[cfg(target_os = "windows")]
+use winreg::RegKey;
 
 /// Configuration structure for YAML file deserialization.
 /// Field names use underscores to match YAML convention (e.g. serial_number).
@@ -47,7 +51,7 @@ struct Config {
     verbose: Option<bool>,
 }
 
-/// Automatically turn your Logitech Litra device on when your webcam turns on, and off when your webcam turns off (macOS and Linux only).
+/// Automatically turn your Logitech Litra device on when your webcam turns on, and off when your webcam turns off.
 #[derive(Debug, Parser)]
 #[clap(name = "litra-autotoggle", version)]
 struct Cli {
@@ -712,6 +716,199 @@ async fn handle_autotoggle_command(
     }
 }
 
+#[cfg(target_os = "windows")]
+const WEBCAM_REGISTRY_PATH: &str =
+    r"SOFTWARE\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\webcam";
+
+#[cfg(target_os = "windows")]
+const NONPACKAGED_APPS_KEY: &str = "NonPackaged";
+
+#[cfg(target_os = "windows")]
+const REGISTRY_POLL_INTERVAL_MS: u64 = 500;
+
+#[cfg(target_os = "windows")]
+async fn handle_autotoggle_command(
+    serial_number: Option<&str>,
+    device_path: Option<&str>,
+    device_type: Option<&str>,
+    require_device: bool,
+    delay: u64,
+) -> CliResult {
+    // Wrap context in Arc<Mutex<>> to enable sharing across tasks
+    let context = Arc::new(Mutex::new(Litra::new()?));
+
+    // Use context inside an async block with locking
+    {
+        let mut context_lock = context.lock().await;
+        let device_handles = get_all_supported_devices(
+            &mut context_lock,
+            serial_number,
+            device_path,
+            device_type,
+            require_device,
+        )?;
+        if device_handles.is_empty() {
+            print_device_not_found_log(serial_number);
+        } else {
+            for device_handle in device_handles {
+                info!(
+                    "Found {} device (serial number: {})",
+                    device_handle.device_type(),
+                    get_serial_number_with_fallback(&device_handle)
+                );
+            }
+        }
+    }
+
+    info!("Monitoring Windows registry for webcam usage...");
+
+    // Add variables for throttling
+    let mut pending_action: Option<tokio::task::JoinHandle<()>> = None;
+    let desired_state = Arc::new(tokio::sync::Mutex::new(None));
+
+    // Track previous camera state
+    let mut previous_camera_in_use = false;
+
+    // Registry path for webcam access
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    let webcam_path = WEBCAM_REGISTRY_PATH;
+
+    loop {
+        // Poll the registry for camera usage
+        let camera_in_use = match hkcu.open_subkey(webcam_path) {
+            Ok(webcam_key) => {
+                let mut any_camera_active = false;
+
+                // Iterate through all subkeys (apps that have accessed the camera)
+                for subkey_name in webcam_key.enum_keys().filter_map(|k| k.ok()) {
+                    if let Ok(app_key) = webcam_key.open_subkey(&subkey_name) {
+                        // Skip the "NonPackaged" key itself, only look at its children
+                        if subkey_name == NONPACKAGED_APPS_KEY {
+                            for nonpackaged_subkey in app_key.enum_keys().filter_map(|k| k.ok()) {
+                                if let Ok(nonpackaged_app_key) =
+                                    app_key.open_subkey(&nonpackaged_subkey)
+                                {
+                                    if is_camera_active(&nonpackaged_app_key) {
+                                        any_camera_active = true;
+                                        break;
+                                    }
+                                }
+                            }
+                            if any_camera_active {
+                                break;
+                            }
+                        } else {
+                            // Regular packaged apps
+                            if is_camera_active(&app_key) {
+                                any_camera_active = true;
+                                break;
+                            }
+                        }
+                    }
+
+                    if any_camera_active {
+                        break;
+                    }
+                }
+
+                any_camera_active
+            }
+            Err(e) => {
+                warn!(
+                    "Failed to access webcam registry key: {}. Assuming camera is not in use.",
+                    e
+                );
+                false
+            }
+        };
+
+        // Only trigger action if state has changed
+        if camera_in_use != previous_camera_in_use {
+            previous_camera_in_use = camera_in_use;
+
+            if camera_in_use {
+                info!("Detected that a video device has been turned on.");
+                let mut state = desired_state.lock().await;
+                *state = Some(true);
+            } else {
+                info!("Detected that a video device has been turned off.");
+                let mut state = desired_state.lock().await;
+                *state = Some(false);
+            }
+
+            // Cancel any pending action
+            if let Some(handle) = pending_action.take() {
+                handle.abort();
+            }
+
+            // Clone variables for the async task
+            let desired_state_clone = desired_state.clone();
+            let context_clone = context.clone();
+            let serial_number_clone = serial_number.map(|s| s.to_string());
+            let device_path_clone = device_path.map(|s| s.to_string());
+            let device_type_clone = device_type.map(|s| s.to_string());
+
+            // Start a new delayed action
+            pending_action = Some(tokio::spawn(async move {
+                tokio::time::sleep(tokio::time::Duration::from_millis(delay)).await;
+
+                let state = {
+                    let mut state = desired_state_clone.lock().await;
+                    state.take()
+                };
+
+                if let Some(state) = state {
+                    let mut context_lock = context_clone.lock().await;
+                    if state {
+                        info!("Attempting to turn on Litra device(s)...");
+                        let _ = turn_on_all_supported_devices_and_log(
+                            &mut context_lock,
+                            serial_number_clone.as_deref(),
+                            device_path_clone.as_deref(),
+                            device_type_clone.as_deref(),
+                            require_device,
+                        );
+                    } else {
+                        info!("Attempting to turn off Litra device(s)...");
+                        let _ = turn_off_all_supported_devices_and_log(
+                            &mut context_lock,
+                            serial_number_clone.as_deref(),
+                            device_path_clone.as_deref(),
+                            device_type_clone.as_deref(),
+                            require_device,
+                        );
+                    }
+                }
+            }));
+        }
+
+        // Poll every REGISTRY_POLL_INTERVAL_MS to check for camera state changes
+        tokio::time::sleep(tokio::time::Duration::from_millis(
+            REGISTRY_POLL_INTERVAL_MS,
+        ))
+        .await;
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn is_camera_active(app_key: &RegKey) -> bool {
+    // Read LastUsedTimeStart and LastUsedTimeStop
+    let start: Result<u64, _> = app_key.get_value("LastUsedTimeStart");
+    let stop: Result<u64, _> = app_key.get_value("LastUsedTimeStop");
+
+    match (start, stop) {
+        (Ok(start_time), Ok(stop_time)) => {
+            // Camera is active if start time is greater than stop time
+            start_time > stop_time
+        }
+        (Ok(_), Err(_)) => {
+            // If we have a start time but no stop time, camera might be in use
+            true
+        }
+        _ => false,
+    }
+}
+
 #[cfg(target_os = "macos")]
 #[tokio::main]
 async fn main() -> ExitCode {
@@ -770,10 +967,45 @@ async fn main() -> ExitCode {
         args.require_device,
         args.video_device.as_deref(),
         args.delay,
-    );
+    )
+    .await;
 
-    if let Err(error) = result.await {
+    if let Err(error) = result {
         error!("{}", error);
+        ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
+    }
+}
+
+#[cfg(target_os = "windows")]
+#[tokio::main]
+async fn main() -> ExitCode {
+    let args = Cli::parse();
+
+    // Merge config file with CLI arguments (if config file is specified)
+    let args = match merge_config_with_cli(args) {
+        Ok(args) => args,
+        Err(error) => {
+            eprintln!("{error}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let log_level = if args.verbose { "debug" } else { "info" };
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(log_level)).init();
+
+    let result = handle_autotoggle_command(
+        args.serial_number.as_deref(),
+        args.device_path.as_deref(),
+        args.device_type.as_deref(),
+        args.require_device,
+        args.delay,
+    )
+    .await;
+
+    if let Err(error) = result {
+        error!("{error}");
         ExitCode::FAILURE
     } else {
         ExitCode::SUCCESS

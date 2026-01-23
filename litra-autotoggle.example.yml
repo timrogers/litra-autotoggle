@@ -37,3 +37,8 @@
 # below to true.
 #
 # verbose: true
+#
+# By default, only the front light is toggled. On Litra Beam LX devices, you can also toggle
+# the back light by setting the option below to true.
+#
+# back: true

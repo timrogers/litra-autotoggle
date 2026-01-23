@@ -49,6 +49,9 @@ struct Config {
 
     #[serde(skip_serializing_if = "Option::is_none")]
     verbose: Option<bool>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    back: Option<bool>,
 }
 
 /// Automatically turn your Logitech Litra device on when your webcam turns on, and off when your webcam turns off.
@@ -109,6 +112,14 @@ struct Cli {
 
     #[clap(long, short, action, help = "Output detailed log messages")]
     verbose: bool,
+
+    #[clap(
+        long,
+        short = 'b',
+        action,
+        help = "Toggle the back light on Litra Beam LX devices. When enabled, the back light will be turned on/off together with the front light."
+    )]
+    back: bool,
 }
 
 fn check_device_filters<'a>(
@@ -274,6 +285,9 @@ fn merge_config_with_cli(mut cli: Cli) -> Result<Cli, CliError> {
         if !cli.verbose {
             cli.verbose = config.verbose.unwrap_or(false);
         }
+        if !cli.back {
+            cli.back = config.back.unwrap_or(false);
+        }
     }
 
     // Validate device_type if specified via CLI or config
@@ -347,6 +361,7 @@ fn turn_on_all_supported_devices_and_log(
     device_path: Option<&str>,
     device_type: Option<&str>,
     require_device: bool,
+    back: bool,
 ) -> Result<(), CliError> {
     let device_handles = get_all_supported_devices(
         context,
@@ -375,6 +390,23 @@ fn turn_on_all_supported_devices_and_log(
                     e
                 );
             }
+
+            // Toggle back light for Litra Beam LX devices if --back is enabled
+            if back && device_handle.device_type() == litra::DeviceType::LitraBeamLX {
+                info!(
+                    "Turning on back light for {} device (serial number: {})",
+                    device_handle.device_type(),
+                    get_serial_number_with_fallback(&device_handle)
+                );
+                if let Err(e) = device_handle.set_back_on(true) {
+                    warn!(
+                        "Failed to turn on back light for {} device (serial number: {}): {}",
+                        device_handle.device_type(),
+                        get_serial_number_with_fallback(&device_handle),
+                        e
+                    );
+                }
+            }
         }
     }
 
@@ -387,6 +419,7 @@ fn turn_off_all_supported_devices_and_log(
     device_path: Option<&str>,
     device_type: Option<&str>,
     require_device: bool,
+    back: bool,
 ) -> Result<(), CliError> {
     let device_handles = get_all_supported_devices(
         context,
@@ -414,6 +447,23 @@ fn turn_off_all_supported_devices_and_log(
                     get_serial_number_with_fallback(&device_handle),
                     e
                 );
+            }
+
+            // Toggle back light for Litra Beam LX devices if --back is enabled
+            if back && device_handle.device_type() == litra::DeviceType::LitraBeamLX {
+                info!(
+                    "Turning off back light for {} device (serial number: {})",
+                    device_handle.device_type(),
+                    get_serial_number_with_fallback(&device_handle)
+                );
+                if let Err(e) = device_handle.set_back_on(false) {
+                    warn!(
+                        "Failed to turn off back light for {} device (serial number: {}): {}",
+                        device_handle.device_type(),
+                        get_serial_number_with_fallback(&device_handle),
+                        e
+                    );
+                }
             }
         }
     }
@@ -446,6 +496,7 @@ async fn handle_autotoggle_command(
     device_type: Option<&str>,
     require_device: bool,
     delay: u64,
+    back: bool,
 ) -> CliResult {
     // Wrap context in Arc<Mutex<>> to enable sharing across tasks
     let context = Arc::new(Mutex::new(Litra::new()?));
@@ -546,6 +597,7 @@ async fn handle_autotoggle_command(
                             device_path_clone.as_deref(),
                             device_type_clone.as_deref(),
                             require_device,
+                            back,
                         );
                     } else {
                         info!("Attempting to turn off Litra device(s)...");
@@ -555,6 +607,7 @@ async fn handle_autotoggle_command(
                             device_path_clone.as_deref(),
                             device_type_clone.as_deref(),
                             require_device,
+                            back,
                         );
                     }
                 }
@@ -579,6 +632,7 @@ async fn handle_autotoggle_command(
     require_device: bool,
     video_device: Option<&str>,
     delay: u64,
+    back: bool,
 ) -> CliResult {
     // Wrap context in Arc<Mutex<>> to enable sharing across tasks
     let context = Arc::new(Mutex::new(Litra::new()?));
@@ -700,6 +754,7 @@ async fn handle_autotoggle_command(
                         device_path_clone.as_deref(),
                         device_type_clone.as_deref(),
                         require_device,
+                        back,
                     );
                 } else {
                     info!("Attempting to turn off Litra device(s)...");
@@ -709,6 +764,7 @@ async fn handle_autotoggle_command(
                         device_path_clone.as_deref(),
                         device_type_clone.as_deref(),
                         require_device,
+                        back,
                     );
                 }
             }
@@ -733,6 +789,7 @@ async fn handle_autotoggle_command(
     device_type: Option<&str>,
     require_device: bool,
     delay: u64,
+    back: bool,
 ) -> CliResult {
     // Wrap context in Arc<Mutex<>> to enable sharing across tasks
     let context = Arc::new(Mutex::new(Litra::new()?));
@@ -867,6 +924,7 @@ async fn handle_autotoggle_command(
                             device_path_clone.as_deref(),
                             device_type_clone.as_deref(),
                             require_device,
+                            back,
                         );
                     } else {
                         info!("Attempting to turn off Litra device(s)...");
@@ -876,6 +934,7 @@ async fn handle_autotoggle_command(
                             device_path_clone.as_deref(),
                             device_type_clone.as_deref(),
                             require_device,
+                            back,
                         );
                     }
                 }
@@ -932,6 +991,7 @@ async fn main() -> ExitCode {
         args.device_type.as_deref(),
         args.require_device,
         args.delay,
+        args.back,
     )
     .await;
 
@@ -967,6 +1027,7 @@ async fn main() -> ExitCode {
         args.require_device,
         args.video_device.as_deref(),
         args.delay,
+        args.back,
     )
     .await;
 
@@ -1001,6 +1062,7 @@ async fn main() -> ExitCode {
         args.device_type.as_deref(),
         args.require_device,
         args.delay,
+        args.back,
     )
     .await;
 
@@ -1034,6 +1096,7 @@ serial_number: "ABC123"
 delay: 2000
 verbose: true
 require_device: true
+back: true
 "#;
         let temp_file = create_temp_config(config_content);
         let config = load_config_file(&temp_file.path().to_path_buf()).unwrap();
@@ -1042,6 +1105,7 @@ require_device: true
         assert_eq!(config.delay, Some(2000));
         assert_eq!(config.verbose, Some(true));
         assert_eq!(config.require_device, Some(true));
+        assert_eq!(config.back, Some(true));
     }
 
     #[test]
@@ -1227,5 +1291,27 @@ delay: 2000
 
         assert_eq!(config.device_type, Some("glow".to_string()));
         assert_eq!(config.delay, Some(2000));
+    }
+
+    #[test]
+    fn test_load_valid_config_back_option() {
+        let config_content = r#"
+back: true
+"#;
+        let temp_file = create_temp_config(config_content);
+        let config = load_config_file(&temp_file.path().to_path_buf()).unwrap();
+
+        assert_eq!(config.back, Some(true));
+    }
+
+    #[test]
+    fn test_load_valid_config_back_option_false() {
+        let config_content = r#"
+back: false
+"#;
+        let temp_file = create_temp_config(config_content);
+        let config = load_config_file(&temp_file.path().to_path_buf()).unwrap();
+
+        assert_eq!(config.back, Some(false));
     }
 }

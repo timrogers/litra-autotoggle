@@ -355,6 +355,29 @@ fn get_all_supported_devices(
     }
 }
 
+/// Helper function to toggle the back light on Litra Beam LX devices.
+/// Only toggles if the device is a Beam LX and the `back` flag is enabled.
+fn toggle_back_light_if_applicable(device_handle: &DeviceHandle, on: bool, back: bool) {
+    if back && device_handle.device_type() == litra::DeviceType::LitraBeamLX {
+        let action = if on { "on" } else { "off" };
+        info!(
+            "Turning {} back light for {} device (serial number: {})",
+            action,
+            device_handle.device_type(),
+            get_serial_number_with_fallback(device_handle)
+        );
+        if let Err(e) = device_handle.set_back_on(on) {
+            warn!(
+                "Failed to turn {} back light for {} device (serial number: {}): {}",
+                action,
+                device_handle.device_type(),
+                get_serial_number_with_fallback(device_handle),
+                e
+            );
+        }
+    }
+}
+
 fn turn_on_all_supported_devices_and_log(
     context: &mut Litra,
     serial_number: Option<&str>,
@@ -391,22 +414,7 @@ fn turn_on_all_supported_devices_and_log(
                 );
             }
 
-            // Toggle back light for Litra Beam LX devices if --back is enabled
-            if back && device_handle.device_type() == litra::DeviceType::LitraBeamLX {
-                info!(
-                    "Turning on back light for {} device (serial number: {})",
-                    device_handle.device_type(),
-                    get_serial_number_with_fallback(&device_handle)
-                );
-                if let Err(e) = device_handle.set_back_on(true) {
-                    warn!(
-                        "Failed to turn on back light for {} device (serial number: {}): {}",
-                        device_handle.device_type(),
-                        get_serial_number_with_fallback(&device_handle),
-                        e
-                    );
-                }
-            }
+            toggle_back_light_if_applicable(&device_handle, true, back);
         }
     }
 
@@ -449,22 +457,7 @@ fn turn_off_all_supported_devices_and_log(
                 );
             }
 
-            // Toggle back light for Litra Beam LX devices if --back is enabled
-            if back && device_handle.device_type() == litra::DeviceType::LitraBeamLX {
-                info!(
-                    "Turning off back light for {} device (serial number: {})",
-                    device_handle.device_type(),
-                    get_serial_number_with_fallback(&device_handle)
-                );
-                if let Err(e) = device_handle.set_back_on(false) {
-                    warn!(
-                        "Failed to turn off back light for {} device (serial number: {}): {}",
-                        device_handle.device_type(),
-                        get_serial_number_with_fallback(&device_handle),
-                        e
-                    );
-                }
-            }
+            toggle_back_light_if_applicable(&device_handle, false, back);
         }
     }
 

@@ -4,6 +4,7 @@
 - [Full Implementation Plan](./auto-update-plan.md) - Comprehensive technical specification
 - [Implementation Checklist](./implementation-checklist.md) - Step-by-step task list
 - [Code Examples](./code-examples.md) - Sample implementation code
+- [Direct API Analysis](./direct-api-analysis.md) - Why we chose direct API over libraries
 
 ## Executive Summary
 
@@ -11,15 +12,19 @@ This planning effort addresses the need for automatic update notifications in `l
 
 ## Recommended Solution
 
-**Use the `update-informer` crate** to check GitHub releases and notify users non-intrusively.
+**Call the GitHub Releases API directly using `reqwest`** to check for updates and notify users non-intrusively.
 
 ### Why This Approach?
 
-1. **Respects Installation Methods**: Doesn't interfere with Homebrew, Cargo, or direct binary installations
-2. **Simple & Lightweight**: Only checks and informs, doesn't modify binaries
-3. **User-Friendly**: Non-intrusive with easy opt-out
-4. **Cross-Platform**: Works on macOS, Linux, and Windows
-5. **Privacy-Focused**: No telemetry, only uses public GitHub API
+1. **Minimal Dependencies**: Only adds reqwest (general-purpose HTTP client) instead of niche crate
+2. **Full Control**: Complete control over caching, error handling, and behavior
+3. **Transparency**: Code is in our repository, easy to understand and audit
+4. **Common Pattern**: Many successful Rust CLI tools (rustup, bat, ripgrep) use this approach
+5. **Maintainable**: No dependency on update-checking-specific crates
+6. **Flexible**: Easy to customize for specific needs
+7. **Respects Installation Methods**: Doesn't interfere with Homebrew, Cargo, or direct binary installations
+
+> **Note:** The original plan recommended `update-informer` crate, but after analysis we determined that calling the GitHub API directly is better for this project. See [direct-api-analysis.md](./direct-api-analysis.md) for detailed reasoning.
 
 ## Key Features
 
@@ -81,10 +86,16 @@ litra-autotoggle --check-update       # Force check now
 ## Implementation Overview
 
 ### New Dependencies
-- `update-informer` - GitHub release checking
+- `reqwest` - HTTP client for GitHub API calls (with rustls-tls)
 - `dirs` - Cross-platform cache directories
 - `chrono` - Timestamp handling
 - `serde_json` - Cache serialization
+
+**Why reqwest?**
+- General-purpose HTTP client (useful for future features)
+- Pure Rust TLS with rustls (no OpenSSL dependency)
+- Better cross-platform support
+- Smaller than update-checking-specific crates
 
 ### New Code Structure
 ```
@@ -95,6 +106,7 @@ src/
 ```
 
 ### Key Functions
+- `check_github_releases()` - Call GitHub Releases API
 - `check_for_updates()` - Main entry point with caching
 - `is_update_check_disabled()` - Check if disabled
 - `format_update_message()` - Create notification
@@ -172,9 +184,20 @@ To implement this plan:
    - Commit working code incrementally
    - Update documentation as you go
 
-## Alternative Considered: `self_update`
+## Alternative Considered: `update-informer` Crate
 
-The `self_update` crate was considered but rejected because:
+The `update-informer` crate was initially recommended but we chose the direct API approach because:
+- ❌ Additional dependency with ~6 transitive dependencies
+- ❌ Less control over caching strategy and error handling
+- ❌ Opinionated about how checks work
+- ❌ May have features we don't need
+- ✅ Direct API gives us more flexibility and transparency
+
+See [direct-api-analysis.md](./direct-api-analysis.md) for a detailed comparison.
+
+## Another Alternative: `self_update` Crate
+
+The `self_update` crate was also considered but rejected because:
 - ❌ Would conflict with package manager installations
 - ❌ More complex to implement
 - ❌ Users prefer updating via their installation method

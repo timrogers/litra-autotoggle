@@ -24,24 +24,43 @@ Users may not be aware when new versions are available, missing out on:
 
 ### Library Selection
 
-After research, two main Rust crates are suitable for this purpose:
+> **UPDATE:** After further analysis, we recommend calling the GitHub API directly rather than using a library. See [direct-api-analysis.md](./direct-api-analysis.md) for detailed reasoning.
 
-#### Option 1: `update-informer` (RECOMMENDED)
+After research, three main approaches are available:
+
+#### Option 1: Direct GitHub API Calls (RECOMMENDED) ⭐
 **Pros:**
-- Simpler, focused on just checking and informing
-- Built-in interval caching (default 24 hours)
-- Supports multiple registries (GitHub, crates.io, npm, PyPI)
-- Lower overhead - doesn't download binaries
-- Non-intrusive by design
-- Well-maintained and widely used
+- Minimal dependencies (just reqwest + serde_json)
+- Full control over caching, timing, error handling
+- Simpler - only implement what we need
+- Transparent and easy to debug
+- More flexible for customization
+- Smaller binary size
+- reqwest is general-purpose (useful for future features)
 
 **Cons:**
-- Does not perform auto-update (only informs)
-- Requires separate command for actual updates
+- More code to write (~100-150 lines)
+- Need to implement caching ourselves
+- Need to handle API quirks ourselves
 
-**Use Case:** Perfect for notifying users to update via their preferred method (Cargo, Homebrew, or direct download)
+**Use Case:** Best for projects that want minimal dependencies, full control, and don't need multi-registry support
 
-#### Option 2: `self_update`
+#### Option 2: `update-informer`
+**Pros:**
+- Less code to write
+- Built-in caching logic
+- Well-tested by community
+- Supports multiple registries (GitHub, crates.io, npm, PyPI)
+
+**Cons:**
+- Additional dependency (~6 transitive dependencies)
+- Less control over caching strategy and error handling
+- Opinionated about how checks work
+- Dependency maintenance burden
+
+**Use Case:** Good for projects needing multi-registry support or wanting minimal code
+
+#### Option 3: `self_update`
 **Pros:**
 - Full featured - checks AND downloads/installs updates
 - Can replace binary in-place
@@ -50,16 +69,21 @@ After research, two main Rust crates are suitable for this purpose:
 **Cons:**
 - More complex implementation
 - May conflict with package manager installations (Homebrew, Cargo)
-- Larger dependency footprint
+- Largest dependency footprint
 - Users may prefer updating via their installation method
 
-### Recommended Approach: `update-informer`
+**Use Case:** Best for standalone binaries not distributed via package managers
+
+### Recommended Approach: Direct GitHub API Calls
 
 **Rationale:**
-1. **Respects Installation Method**: Users who installed via Homebrew or Cargo should update via those methods to maintain consistency
-2. **Simpler Implementation**: Just check and notify, don't modify binaries
-3. **Lower Risk**: No permission issues or conflicts with package managers
-4. **Better UX**: Inform users and let them choose how to update
+1. **Minimal Dependencies**: Only adds reqwest (general-purpose HTTP client) instead of niche update-checking crate
+2. **Full Control**: Complete control over caching, error handling, and behavior
+3. **Transparency**: Code is in our repository, easy to understand and audit
+4. **Maintainability**: No need to track update-informer updates or breaking changes
+5. **Common Pattern**: Many successful Rust CLI tools (rustup, bat, ripgrep) use this approach
+6. **Flexible**: Easy to customize for specific needs
+7. **Respects Installation Method**: Like update-informer, just notifies users without auto-updating
 
 ## Implementation Design
 
@@ -189,6 +213,21 @@ src/
 
 **update_checker.rs:**
 ```rust
+// GitHub API constants
+const GITHUB_API_BASE: &str = "https://api.github.com";
+const REPO_OWNER: &str = "timrogers";
+const REPO_NAME: &str = "litra-autotoggle";
+
+// GitHub Release response structure
+#[derive(Deserialize)]
+struct GitHubRelease {
+    tag_name: String,
+    published_at: String,
+}
+
+// Call GitHub Releases API
+async fn check_github_releases() -> Result<Option<String>, Box<dyn std::error::Error>>
+
 // Check for updates with caching
 pub async fn check_for_updates(
     current_version: &str,
@@ -228,15 +267,24 @@ pub fn is_cache_expired(cache: &UpdateCache, interval_hours: u64) -> bool
 ```toml
 [dependencies]
 # Existing dependencies...
-update-informer = "1.1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 dirs = "5.0"
-semver = "1.0"  # For version comparison
-serde_json = "1.0"  # For cache serialization
+serde_json = "1.0"  # For cache serialization (may already be present)
 chrono = { version = "0.4", features = ["serde"] }  # For timestamps
-
-# Optional: for colored output
-colored = "2.1"
 ```
+
+**Why reqwest with rustls-tls?**
+- Pure Rust TLS implementation (no OpenSSL dependency)
+- Better cross-platform compatibility
+- Smaller binary size
+- More secure and maintained
+
+**Why not OpenSSL?**
+- Requires system OpenSSL library
+- Harder to cross-compile
+- Potential security vulnerabilities in system libraries
+
+**Total new dependencies:** 4 direct + ~8 transitive (compared to ~15 with update-informer)
 
 ### 7. Testing Strategy
 

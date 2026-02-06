@@ -1,21 +1,35 @@
 # Code Implementation Examples
 
-This document provides code examples for implementing automatic update checks.
+This document provides code examples for implementing automatic update checks using direct GitHub API calls.
+
+> **Note:** These examples use direct GitHub API calls with `reqwest` rather than the `update-informer` crate. See [direct-api-analysis.md](./direct-api-analysis.md) for the rationale behind this decision.
 
 ## 1. Update Checker Module (src/update_checker.rs)
 
 ```rust
 use chrono::{DateTime, Utc};
 use log::{debug, warn};
+use reqwest;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
-use update_informer::{registry, Check};
 
+// GitHub API constants
+const GITHUB_API_BASE: &str = "https://api.github.com";
+const REPO_OWNER: &str = "timrogers";
+const REPO_NAME: &str = "litra-autotoggle";
 const CACHE_FILE_NAME: &str = "update-cache.json";
 const DEFAULT_CHECK_INTERVAL_HOURS: u64 = 24;
 const UPDATE_CHECK_TIMEOUT_SECS: u64 = 5;
+
+/// GitHub Release API response
+#[derive(Debug, Deserialize)]
+struct GitHubRelease {
+    tag_name: String,
+    name: String,
+    published_at: String,
+}
 
 /// Cache structure for storing update check results
 #[derive(Debug, Serialize, Deserialize)]
@@ -103,34 +117,48 @@ fn get_check_interval_hours(config_interval: Option<u64>) -> u64 {
     config_interval.unwrap_or(DEFAULT_CHECK_INTERVAL_HOURS)
 }
 
-/// Check for updates using the GitHub API via update-informer
-async fn check_for_updates_internal(
+/// Check for updates using the GitHub Releases API
+async fn check_github_releases(
     current_version: &str,
 ) -> Result<Option<String>, Box<dyn std::error::Error>> {
-    let informer = update_informer::new(registry::GitHub, "timrogers", "litra-autotoggle", current_version)
-        .timeout(Duration::from_secs(UPDATE_CHECK_TIMEOUT_SECS));
+    let url = format!(
+        "{}/repos/{}/{}/releases/latest",
+        GITHUB_API_BASE, REPO_OWNER, REPO_NAME
+    );
 
-    // Run the check with timeout
-    let result = tokio::time::timeout(
-        Duration::from_secs(UPDATE_CHECK_TIMEOUT_SECS),
-        tokio::task::spawn_blocking(move || informer.check_version()),
-    )
-    .await;
+    // Build HTTP client with timeout and user agent
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(UPDATE_CHECK_TIMEOUT_SECS))
+        .user_agent(concat!(
+            env!("CARGO_PKG_NAME"),
+            "/",
+            env!("CARGO_PKG_VERSION")
+        ))
+        .build()?;
 
-    match result {
-        Ok(Ok(Ok(version))) => Ok(version),
-        Ok(Ok(Err(e))) => {
-            debug!("Update check failed: {}", e);
-            Ok(None)
-        }
-        Ok(Err(e)) => {
-            debug!("Update check task failed: {}", e);
-            Ok(None)
-        }
-        Err(_) => {
-            debug!("Update check timed out");
-            Ok(None)
-        }
+    debug!("Checking for updates at {}", url);
+
+    // Make the API request
+    let response = client.get(&url).send().await?;
+
+    // Check if request was successful
+    if !response.status().is_success() {
+        debug!("GitHub API returned status: {}", response.status());
+        return Ok(None);
+    }
+
+    // Parse JSON response
+    let release: GitHubRelease = response.json().await?;
+    debug!("Latest release: {}", release.tag_name);
+
+    // Strip 'v' prefix if present
+    let latest_version = release.tag_name.trim_start_matches('v').to_string();
+
+    // Compare versions
+    if latest_version != current_version {
+        Ok(Some(latest_version))
+    } else {
+        Ok(None)
     }
 }
 
@@ -168,9 +196,9 @@ pub async fn check_for_updates(
         }
     }
 
-    // Perform actual check
+    // Perform actual check using GitHub API
     debug!("Checking for updates...");
-    let latest_version = match check_for_updates_internal(current_version).await {
+    let latest_version = match check_github_releases(current_version).await {
         Ok(version) => version,
         Err(e) => {
             warn!("Failed to check for updates: {}", e);
@@ -370,7 +398,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_yaml = "0.9"
 serde_json = "1.0"
 tokio = { version = "1.49.0", features = ["full"] }
-update-informer = "1.1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 dirs = "5.0"
 chrono = { version = "0.4", features = ["serde"] }
 
@@ -383,6 +411,12 @@ winreg = "0.55"
 [dev-dependencies]
 tempfile = "3.24"
 ```
+
+**Key changes:**
+- Added `reqwest` with `rustls-tls` feature (avoids OpenSSL dependency)
+- Added `dirs` for platform-specific cache directories
+- Added `chrono` for timestamp handling
+- `serde_json` for cache serialization (may already be present)
 
 ## 4. Updated Config File Example (litra-autotoggle.example.yml)
 

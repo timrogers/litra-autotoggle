@@ -5,6 +5,7 @@ use litra::{Device, DeviceError, DeviceHandle, Litra};
 #[cfg(target_os = "macos")]
 use log::debug;
 use log::{error, info, warn};
+use self_update::cargo_crate_version;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::fs;
@@ -120,6 +121,13 @@ struct Cli {
         help = "Toggle the back light on Litra Beam LX devices. When enabled, the back light will be turned on/off together with the front light."
     )]
     back: bool,
+
+    #[clap(
+        long,
+        action,
+        help = "Check for available updates from GitHub releases"
+    )]
+    check_update: bool,
 }
 
 fn check_device_filters<'a>(
@@ -251,6 +259,51 @@ fn load_config_file(config_path: &PathBuf) -> Result<Config, CliError> {
     )?;
 
     Ok(config)
+}
+
+/// Checks for available updates from GitHub releases
+async fn check_for_updates() -> Result<(), Box<dyn std::error::Error>> {
+    info!("Checking for updates...");
+    
+    let current_version = cargo_crate_version!();
+    info!("Current version: {}", current_version);
+
+    // Run the blocking self_update code in a separate thread
+    let result = tokio::task::spawn_blocking(move || {
+        let releases = self_update::backends::github::ReleaseList::configure()
+            .repo_owner("timrogers")
+            .repo_name("litra-autotoggle")
+            .build()
+            .map_err(|e| format!("Failed to build release list: {}", e))?
+            .fetch()
+            .map_err(|e| format!("Failed to fetch releases: {}", e))?;
+
+        Ok::<_, String>(releases)
+    })
+    .await
+    .map_err(|e| format!("Task join error: {}", e))?
+    .map_err(|e| format!("{}", e))?;
+
+    if let Some(latest) = result.first() {
+        let latest_version = latest.version.trim_start_matches('v');
+        info!("Latest version: {}", latest_version);
+
+        if latest_version != current_version {
+            println!("🎉 A new version is available!");
+            println!("   Current version: {}", current_version);
+            println!("   Latest version:  {}", latest_version);
+            println!("\nTo update:");
+            println!("  • Via Homebrew: brew upgrade litra-autotoggle");
+            println!("  • Via Cargo:    cargo install litra-autotoggle --force");
+            println!("  • Via binary:   Download from https://github.com/timrogers/litra-autotoggle/releases/latest");
+        } else {
+            println!("✓ You are running the latest version ({})", current_version);
+        }
+    } else {
+        warn!("No releases found");
+    }
+
+    Ok(())
 }
 
 /// Merges CLI arguments with config file values.
@@ -978,6 +1031,17 @@ async fn main() -> ExitCode {
     let log_level = if args.verbose { "debug" } else { "info" };
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(log_level)).init();
 
+    // Handle update check if requested
+    if args.check_update {
+        return match check_for_updates().await {
+            Ok(_) => ExitCode::SUCCESS,
+            Err(error) => {
+                error!("Failed to check for updates: {error}");
+                ExitCode::FAILURE
+            }
+        };
+    }
+
     let result = handle_autotoggle_command(
         args.serial_number.as_deref(),
         args.device_path.as_deref(),
@@ -1012,6 +1076,17 @@ async fn main() -> ExitCode {
 
     let log_level = if args.verbose { "debug" } else { "info" };
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(log_level)).init();
+
+    // Handle update check if requested
+    if args.check_update {
+        return match check_for_updates().await {
+            Ok(_) => ExitCode::SUCCESS,
+            Err(error) => {
+                error!("Failed to check for updates: {error}");
+                ExitCode::FAILURE
+            }
+        };
+    }
 
     let result = handle_autotoggle_command(
         args.serial_number.as_deref(),
@@ -1048,6 +1123,17 @@ async fn main() -> ExitCode {
 
     let log_level = if args.verbose { "debug" } else { "info" };
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(log_level)).init();
+
+    // Handle update check if requested
+    if args.check_update {
+        return match check_for_updates().await {
+            Ok(_) => ExitCode::SUCCESS,
+            Err(error) => {
+                error!("Failed to check for updates: {error}");
+                ExitCode::FAILURE
+            }
+        };
+    }
 
     let result = handle_autotoggle_command(
         args.serial_number.as_deref(),

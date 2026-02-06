@@ -1037,9 +1037,15 @@ async fn check_for_updates() {
                         let current_version = CURRENT_VERSION.trim_start_matches('v');
 
                         if is_newer_version(current_version, remote_version) {
-                            info!("╔═══════════════════════════════════════════════════════════════╗");
-                            info!("║ 🎉 A new version of litra-autotoggle is available!           ║");
-                            info!("║                                                               ║");
+                            info!(
+                                "╔═══════════════════════════════════════════════════════════════╗"
+                            );
+                            info!(
+                                "║ 🎉 A new version of litra-autotoggle is available!           ║"
+                            );
+                            info!(
+                                "║                                                               ║"
+                            );
                             info!(
                                 "║ Current version: {:<44} ║",
                                 format!("v{}", current_version)
@@ -1048,9 +1054,13 @@ async fn check_for_updates() {
                                 "║ Latest version:  {:<44} ║",
                                 format!("v{}", remote_version)
                             );
-                            info!("║                                                               ║");
+                            info!(
+                                "║                                                               ║"
+                            );
                             info!("║ Download: {:<51} ║", release.html_url);
-                            info!("╚═══════════════════════════════════════════════════════════════╝");
+                            info!(
+                                "╚═══════════════════════════════════════════════════════════════╝"
+                            );
                         } else {
                             info!("You are running the latest version (v{}).", current_version);
                         }
@@ -1063,7 +1073,10 @@ async fn check_for_updates() {
                 warn!(
                     "Failed to check for updates: HTTP {} - {}",
                     response.status(),
-                    response.status().canonical_reason().unwrap_or("Unknown error")
+                    response
+                        .status()
+                        .canonical_reason()
+                        .unwrap_or("Unknown error")
                 );
             }
         }
@@ -1433,5 +1446,53 @@ back: false
         let config = load_config_file(&temp_file.path().to_path_buf()).unwrap();
 
         assert_eq!(config.back, Some(false));
+    }
+
+    #[test]
+    fn test_load_valid_config_check_updates_option() {
+        let config_content = r#"
+check_updates: true
+"#;
+        let temp_file = create_temp_config(config_content);
+        let config = load_config_file(&temp_file.path().to_path_buf()).unwrap();
+
+        assert_eq!(config.check_updates, Some(true));
+    }
+
+    #[test]
+    fn test_is_newer_version_patch_update() {
+        assert!(is_newer_version("1.2.0", "1.2.1"));
+        assert!(!is_newer_version("1.2.1", "1.2.0"));
+    }
+
+    #[test]
+    fn test_is_newer_version_minor_update() {
+        assert!(is_newer_version("1.2.0", "1.3.0"));
+        assert!(!is_newer_version("1.3.0", "1.2.0"));
+    }
+
+    #[test]
+    fn test_is_newer_version_major_update() {
+        assert!(is_newer_version("1.2.0", "2.0.0"));
+        assert!(!is_newer_version("2.0.0", "1.2.0"));
+    }
+
+    #[test]
+    fn test_is_newer_version_equal() {
+        assert!(!is_newer_version("1.2.0", "1.2.0"));
+    }
+
+    #[test]
+    fn test_is_newer_version_with_v_prefix() {
+        assert!(is_newer_version("v1.2.0", "v1.3.0"));
+        assert!(is_newer_version("1.2.0", "v1.3.0"));
+        assert!(is_newer_version("v1.2.0", "1.3.0"));
+    }
+
+    #[test]
+    fn test_is_newer_version_multi_digit() {
+        assert!(is_newer_version("1.10.0", "1.11.0"));
+        assert!(is_newer_version("1.9.0", "1.10.0"));
+        assert!(!is_newer_version("1.10.0", "1.9.0"));
     }
 }

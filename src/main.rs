@@ -1008,8 +1008,8 @@ fn is_newer_version(current: &str, remote: &str) -> bool {
         }
     }
 
-    // If all compared parts are equal, check if remote has more parts
-    remote_parts.len() > current_parts.len()
+    // If all compared parts are equal, return false (versions are equal)
+    false
 }
 
 /// Checks for updates from GitHub releases
@@ -1037,30 +1037,10 @@ async fn check_for_updates() {
                         let current_version = CURRENT_VERSION.trim_start_matches('v');
 
                         if is_newer_version(current_version, remote_version) {
-                            info!(
-                                "╔═══════════════════════════════════════════════════════════════╗"
-                            );
-                            info!(
-                                "║ 🎉 A new version of litra-autotoggle is available!           ║"
-                            );
-                            info!(
-                                "║                                                               ║"
-                            );
-                            info!(
-                                "║ Current version: {:<44} ║",
-                                format!("v{}", current_version)
-                            );
-                            info!(
-                                "║ Latest version:  {:<44} ║",
-                                format!("v{}", remote_version)
-                            );
-                            info!(
-                                "║                                                               ║"
-                            );
-                            info!("║ Download: {:<51} ║", release.html_url);
-                            info!(
-                                "╚═══════════════════════════════════════════════════════════════╝"
-                            );
+                            info!("🎉 A new version of litra-autotoggle is available!");
+                            info!("   Current version: v{}", current_version);
+                            info!("   Latest version:  v{}", remote_version);
+                            info!("   Download: {}", release.html_url);
                         } else {
                             info!("You are running the latest version (v{}).", current_version);
                         }
@@ -1494,5 +1474,13 @@ check_updates: true
         assert!(is_newer_version("1.10.0", "1.11.0"));
         assert!(is_newer_version("1.9.0", "1.10.0"));
         assert!(!is_newer_version("1.10.0", "1.9.0"));
+    }
+
+    #[test]
+    fn test_is_newer_version_different_lengths() {
+        // Versions with different lengths should be treated as equal if common parts match
+        assert!(!is_newer_version("1.0", "1.0.0"));
+        assert!(!is_newer_version("1.0.0", "1.0"));
+        assert!(!is_newer_version("2.1", "2.1.0.0"));
     }
 }

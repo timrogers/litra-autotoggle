@@ -50,6 +50,9 @@ To customize the background service's configuration, edit the config file at `$(
 
 Just run `litra-autotoggle`. By default, all connected Litra devices will turn on when your webcam turns on, and off when your webcam turns off.
 
+> [!NOTE]
+> When `litra-autotoggle` starts, it automatically checks for new versions available on GitHub. If a newer version is available, you'll see a notification in the logs. This check runs in the background and won't slow down the application startup.
+
 The following arguments are supported:
 
 - `--config-file` to specify a YAML configuration file containing options (see "Using a configuration file" below)

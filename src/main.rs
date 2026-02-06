@@ -13,6 +13,7 @@ use std::process::ExitCode;
 #[cfg(target_os = "macos")]
 use std::process::Stdio;
 use std::sync::Arc;
+use std::time::Duration;
 #[cfg(target_os = "macos")]
 use tokio::io::{AsyncBufReadExt, BufReader};
 #[cfg(target_os = "macos")]
@@ -52,6 +53,9 @@ struct Config {
 
     #[serde(skip_serializing_if = "Option::is_none")]
     back: Option<bool>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    skip_update_check: Option<bool>,
 }
 
 /// Automatically turn your Logitech Litra device on when your webcam turns on, and off when your webcam turns off.
@@ -120,6 +124,62 @@ struct Cli {
         help = "Toggle the back light on Litra Beam LX devices. When enabled, the back light will be turned on/off together with the front light."
     )]
     back: bool,
+
+    #[clap(
+        long,
+        action,
+        help = "Skip checking for updates on startup. By default, the tool checks GitHub for new releases."
+    )]
+    skip_update_check: bool,
+}
+
+const GITHUB_RELEASES_URL: &str =
+    "https://api.github.com/repos/timrogers/litra-autotoggle/releases/latest";
+const UPDATE_CHECK_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Checks GitHub for a newer release and logs a warning if one is available.
+/// This is best-effort: any errors are silently ignored.
+async fn check_for_updates() {
+    let result = tokio::time::timeout(UPDATE_CHECK_TIMEOUT, async {
+        let client = reqwest::Client::builder()
+            .user_agent(concat!("litra-autotoggle/", env!("CARGO_PKG_VERSION")))
+            .build()?;
+
+        let response = client.get(GITHUB_RELEASES_URL).send().await?;
+        let body: serde_json::Value = response.json().await?;
+
+        let tag_name = body["tag_name"]
+            .as_str()
+            .ok_or("missing tag_name")?;
+
+        let latest_version_str = tag_name.strip_prefix('v').unwrap_or(tag_name);
+
+        let current = semver::Version::parse(env!("CARGO_PKG_VERSION"))
+            .map_err(|e| format!("invalid current version: {e}"))?;
+        let latest = semver::Version::parse(latest_version_str)
+            .map_err(|e| format!("invalid latest version: {e}"))?;
+
+        if latest > current {
+            warn!(
+                "A new version of litra-autotoggle is available: v{} (you have v{}). \
+                 Download it from https://github.com/timrogers/litra-autotoggle/releases/latest",
+                latest, current
+            );
+        }
+
+        Ok::<(), Box<dyn std::error::Error>>(())
+    })
+    .await;
+
+    match result {
+        Ok(Err(e)) => {
+            info!("Update check failed: {}", e);
+        }
+        Err(_) => {
+            info!("Update check timed out");
+        }
+        Ok(Ok(())) => {}
+    }
 }
 
 fn check_device_filters<'a>(
@@ -287,6 +347,9 @@ fn merge_config_with_cli(mut cli: Cli) -> Result<Cli, CliError> {
         }
         if !cli.back {
             cli.back = config.back.unwrap_or(false);
+        }
+        if !cli.skip_update_check {
+            cli.skip_update_check = config.skip_update_check.unwrap_or(false);
         }
     }
 
@@ -978,6 +1041,10 @@ async fn main() -> ExitCode {
     let log_level = if args.verbose { "debug" } else { "info" };
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(log_level)).init();
 
+    if !args.skip_update_check {
+        check_for_updates().await;
+    }
+
     let result = handle_autotoggle_command(
         args.serial_number.as_deref(),
         args.device_path.as_deref(),
@@ -1012,6 +1079,10 @@ async fn main() -> ExitCode {
 
     let log_level = if args.verbose { "debug" } else { "info" };
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(log_level)).init();
+
+    if !args.skip_update_check {
+        check_for_updates().await;
+    }
 
     let result = handle_autotoggle_command(
         args.serial_number.as_deref(),
@@ -1048,6 +1119,10 @@ async fn main() -> ExitCode {
 
     let log_level = if args.verbose { "debug" } else { "info" };
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(log_level)).init();
+
+    if !args.skip_update_check {
+        check_for_updates().await;
+    }
 
     let result = handle_autotoggle_command(
         args.serial_number.as_deref(),

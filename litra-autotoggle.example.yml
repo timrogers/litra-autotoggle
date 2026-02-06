@@ -42,3 +42,8 @@
 # the back light by setting the option below to true.
 #
 # back: true
+#
+# By default, the tool checks GitHub for new releases on startup. You can disable this
+# by setting the option below to true.
+#
+# skip_update_check: true

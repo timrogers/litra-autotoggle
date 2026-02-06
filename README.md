@@ -61,6 +61,7 @@ The following arguments are supported:
 - `--delay` to customize the delay (in milliseconds) between a webcam event being detected and toggling your Litra. When your webcam turns on or off, multiple events may be generated in quick succession. Setting a delay allows the program to wait for all events before taking action, avoiding flickering. Defaults to 1.5 seconds (1500 milliseconds).
 - `--verbose` to enable verbose logging
 - `--back` to toggle the back light on Litra Beam LX devices. When enabled, the back light will be turned on/off together with the front light.
+- `--check-updates` to check for updates on startup. When enabled, the application will check GitHub for new releases and notify you if a newer version is available.
 
 > [!NOTE]
 > Only one filter (`--serial-number`, `--device-path`, or `--device-type`) can be specified at a time.
@@ -123,6 +124,7 @@ All command-line options can be specified in the configuration file using unders
 - `delay` (number, in milliseconds)
 - `verbose` (boolean)
 - `back` (boolean, toggles the back light on Litra Beam LX devices)
+- `check_updates` (boolean, check for new releases on startup)
 
 **Important notes:**
 

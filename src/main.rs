@@ -23,6 +23,10 @@ use winreg::enums::*;
 #[cfg(target_os = "windows")]
 use winreg::RegKey;
 
+const GITHUB_API_RELEASES_URL: &str =
+    "https://api.github.com/repos/timrogers/litra-autotoggle/releases/latest";
+const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
+
 /// Configuration structure for YAML file deserialization.
 /// Field names use underscores to match YAML convention (e.g. serial_number).
 #[derive(Debug, Deserialize, Serialize, Default)]
@@ -52,6 +56,9 @@ struct Config {
 
     #[serde(skip_serializing_if = "Option::is_none")]
     back: Option<bool>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    check_updates: Option<bool>,
 }
 
 /// Automatically turn your Logitech Litra device on when your webcam turns on, and off when your webcam turns off.
@@ -120,6 +127,14 @@ struct Cli {
         help = "Toggle the back light on Litra Beam LX devices. When enabled, the back light will be turned on/off together with the front light."
     )]
     back: bool,
+
+    #[clap(
+        long,
+        short = 'u',
+        action,
+        help = "Check for updates on startup. If enabled, the application will check for new releases on GitHub and notify you if a newer version is available."
+    )]
+    check_updates: bool,
 }
 
 fn check_device_filters<'a>(
@@ -287,6 +302,9 @@ fn merge_config_with_cli(mut cli: Cli) -> Result<Cli, CliError> {
         }
         if !cli.back {
             cli.back = config.back.unwrap_or(false);
+        }
+        if !cli.check_updates {
+            cli.check_updates = config.check_updates.unwrap_or(false);
         }
     }
 
@@ -961,6 +979,100 @@ fn is_camera_active(app_key: &RegKey) -> bool {
     }
 }
 
+/// Structure for deserializing GitHub release response
+#[derive(Debug, Deserialize)]
+struct GitHubRelease {
+    tag_name: String,
+    html_url: String,
+    name: Option<String>,
+}
+
+/// Compares two semantic version strings (without 'v' prefix)
+/// Returns true if remote_version is newer than current_version
+fn is_newer_version(current: &str, remote: &str) -> bool {
+    let parse_version = |v: &str| -> Vec<u32> {
+        v.trim_start_matches('v')
+            .split('.')
+            .filter_map(|s| s.parse().ok())
+            .collect()
+    };
+
+    let current_parts = parse_version(current);
+    let remote_parts = parse_version(remote);
+
+    for (c, r) in current_parts.iter().zip(remote_parts.iter()) {
+        if r > c {
+            return true;
+        } else if r < c {
+            return false;
+        }
+    }
+
+    // If all compared parts are equal, check if remote has more parts
+    remote_parts.len() > current_parts.len()
+}
+
+/// Checks for updates from GitHub releases
+async fn check_for_updates() {
+    info!("Checking for updates...");
+
+    let client = match reqwest::Client::builder()
+        .user_agent(format!("litra-autotoggle/{}", CURRENT_VERSION))
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+    {
+        Ok(client) => client,
+        Err(e) => {
+            warn!("Failed to create HTTP client for update check: {}", e);
+            return;
+        }
+    };
+
+    match client.get(GITHUB_API_RELEASES_URL).send().await {
+        Ok(response) => {
+            if response.status().is_success() {
+                match response.json::<GitHubRelease>().await {
+                    Ok(release) => {
+                        let remote_version = release.tag_name.trim_start_matches('v');
+                        let current_version = CURRENT_VERSION.trim_start_matches('v');
+
+                        if is_newer_version(current_version, remote_version) {
+                            info!("╔═══════════════════════════════════════════════════════════════╗");
+                            info!("║ 🎉 A new version of litra-autotoggle is available!           ║");
+                            info!("║                                                               ║");
+                            info!(
+                                "║ Current version: {:<44} ║",
+                                format!("v{}", current_version)
+                            );
+                            info!(
+                                "║ Latest version:  {:<44} ║",
+                                format!("v{}", remote_version)
+                            );
+                            info!("║                                                               ║");
+                            info!("║ Download: {:<51} ║", release.html_url);
+                            info!("╚═══════════════════════════════════════════════════════════════╝");
+                        } else {
+                            info!("You are running the latest version (v{}).", current_version);
+                        }
+                    }
+                    Err(e) => {
+                        warn!("Failed to parse GitHub release response: {}", e);
+                    }
+                }
+            } else {
+                warn!(
+                    "Failed to check for updates: HTTP {} - {}",
+                    response.status(),
+                    response.status().canonical_reason().unwrap_or("Unknown error")
+                );
+            }
+        }
+        Err(e) => {
+            warn!("Failed to check for updates: {}", e);
+        }
+    }
+}
+
 #[cfg(target_os = "macos")]
 #[tokio::main]
 async fn main() -> ExitCode {
@@ -977,6 +1089,11 @@ async fn main() -> ExitCode {
 
     let log_level = if args.verbose { "debug" } else { "info" };
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(log_level)).init();
+
+    // Check for updates if requested
+    if args.check_updates {
+        check_for_updates().await;
+    }
 
     let result = handle_autotoggle_command(
         args.serial_number.as_deref(),
@@ -1013,6 +1130,11 @@ async fn main() -> ExitCode {
     let log_level = if args.verbose { "debug" } else { "info" };
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(log_level)).init();
 
+    // Check for updates if requested
+    if args.check_updates {
+        check_for_updates().await;
+    }
+
     let result = handle_autotoggle_command(
         args.serial_number.as_deref(),
         args.device_path.as_deref(),
@@ -1048,6 +1170,11 @@ async fn main() -> ExitCode {
 
     let log_level = if args.verbose { "debug" } else { "info" };
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(log_level)).init();
+
+    // Check for updates if requested
+    if args.check_updates {
+        check_for_updates().await;
+    }
 
     let result = handle_autotoggle_command(
         args.serial_number.as_deref(),

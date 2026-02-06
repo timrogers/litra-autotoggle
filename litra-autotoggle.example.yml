@@ -42,3 +42,8 @@
 # the back light by setting the option below to true.
 #
 # back: true
+#
+# By default, the tool does not check for updates. You can enable automatic update checks
+# on startup by setting the option below to true.
+#
+# check_updates: true

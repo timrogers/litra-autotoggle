@@ -961,6 +961,49 @@ fn is_camera_active(app_key: &RegKey) -> bool {
     }
 }
 
+/// Check for updates from GitHub releases
+fn check_for_updates() {
+    // Run in a separate thread to avoid blocking startup
+    std::thread::spawn(|| {
+        match check_for_updates_impl() {
+            Ok(update_available) => {
+                if update_available {
+                    info!("🎉 A new version of litra-autotoggle is available!");
+                    info!("Visit https://github.com/timrogers/litra-autotoggle/releases/latest to download the latest version.");
+                }
+            }
+            Err(e) => {
+                // Log at debug level - we don't want to alarm users if the check fails
+                log::debug!("Failed to check for updates: {}", e);
+            }
+        }
+    });
+}
+
+/// Implementation of update checking logic
+fn check_for_updates_impl() -> Result<bool, Box<dyn std::error::Error>> {
+    let current_version = env!("CARGO_PKG_VERSION");
+    
+    let releases = self_update::backends::github::ReleaseList::configure()
+        .repo_owner("timrogers")
+        .repo_name("litra-autotoggle")
+        .build()?
+        .fetch()?;
+    
+    // Get the first release (latest by default from GitHub API)
+    if let Some(latest_release) = releases.first() {
+        let latest_version = latest_release.version.trim_start_matches('v');
+        
+        // Compare versions using semver parsing
+        let current = semver::Version::parse(current_version)?;
+        let latest = semver::Version::parse(latest_version)?;
+        
+        return Ok(latest > current);
+    }
+    
+    Ok(false)
+}
+
 #[cfg(target_os = "macos")]
 #[tokio::main]
 async fn main() -> ExitCode {
@@ -977,6 +1020,9 @@ async fn main() -> ExitCode {
 
     let log_level = if args.verbose { "debug" } else { "info" };
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(log_level)).init();
+
+    // Check for updates (non-blocking)
+    check_for_updates();
 
     let result = handle_autotoggle_command(
         args.serial_number.as_deref(),
@@ -1013,6 +1059,9 @@ async fn main() -> ExitCode {
     let log_level = if args.verbose { "debug" } else { "info" };
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(log_level)).init();
 
+    // Check for updates (non-blocking)
+    check_for_updates();
+
     let result = handle_autotoggle_command(
         args.serial_number.as_deref(),
         args.device_path.as_deref(),
@@ -1048,6 +1097,9 @@ async fn main() -> ExitCode {
 
     let log_level = if args.verbose { "debug" } else { "info" };
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(log_level)).init();
+
+    // Check for updates (non-blocking)
+    check_for_updates();
 
     let result = handle_autotoggle_command(
         args.serial_number.as_deref(),

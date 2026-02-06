@@ -282,7 +282,7 @@ async fn check_for_updates() -> Result<(), Box<dyn std::error::Error>> {
     })
     .await
     .map_err(|e| format!("Task join error: {}", e))?
-    .map_err(|e| format!("{}", e))?;
+    .map_err(|e| e.to_string())?;
 
     if let Some(latest) = result.first() {
         let latest_version = latest.version.trim_start_matches('v');

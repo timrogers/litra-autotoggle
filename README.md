@@ -31,6 +31,16 @@ The following Logitech Litra devices, **connected via USB**, are supported:
 1. Add the binary to your `PATH` (or `$PATH` on Unix-like systems), so you can execute it from your shell/terminal. For the best experience, call it `litra-autotoggle` (or `litra-autotoggle.exe` on Windows).
 1. Run `litra-autotoggle --help` to check that everything is working.
 
+## Checking for updates
+
+To check if a new version of `litra-autotoggle` is available, run:
+
+```bash
+litra-autotoggle --check-update
+```
+
+This will check GitHub releases and inform you if a newer version is available, along with instructions on how to update.
+
 ## Usage
 
 ### In the background, using Homebrew Services ([Homebrew](https://brew.sh/) installations only)
@@ -61,6 +71,7 @@ The following arguments are supported:
 - `--delay` to customize the delay (in milliseconds) between a webcam event being detected and toggling your Litra. When your webcam turns on or off, multiple events may be generated in quick succession. Setting a delay allows the program to wait for all events before taking action, avoiding flickering. Defaults to 1.5 seconds (1500 milliseconds).
 - `--verbose` to enable verbose logging
 - `--back` to toggle the back light on Litra Beam LX devices. When enabled, the back light will be turned on/off together with the front light.
+- `--check-update` to check for available updates from GitHub releases. When this flag is used, the program will check for new versions and display update instructions without running the autotoggle functionality.
 
 > [!NOTE]
 > Only one filter (`--serial-number`, `--device-path`, or `--device-type`) can be specified at a time.

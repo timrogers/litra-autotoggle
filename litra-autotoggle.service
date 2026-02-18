@@ -1,0 +1,16 @@
+[Unit]
+Description=Logitech Litra auto-toggle based on webcam activity
+Documentation=https://github.com/timrogers/litra-autotoggle
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/litra-autotoggle --config-file %h/.config/litra-autotoggle/config.yml
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=litra-autotoggle
+
+[Install]
+WantedBy=default.target

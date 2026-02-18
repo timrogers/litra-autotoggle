@@ -27,7 +27,7 @@ use winreg::RegKey;
 /// Field names use underscores to match YAML convention (e.g. serial_number).
 #[derive(Debug, Deserialize, Serialize, Default)]
 #[serde(deny_unknown_fields)]
-struct Config {
+struct AppConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     serial_number: Option<String>,
 
@@ -56,7 +56,7 @@ struct Config {
 
 /// Automatically turn your Logitech Litra device on when your webcam turns on, and off when your webcam turns off.
 #[derive(Debug, Parser)]
-#[clap(name = "litra-autotoggle", version)]
+#[clap(name = "litra-autotoggle", version, after_long_help = "This CLI automatically checks for updates once per day. To disable update checks, set the LITRA_AUTOTOGGLE_DISABLE_UPDATE_CHECK environment variable to any value.")]
 struct Cli {
     #[clap(
         long,
@@ -229,13 +229,13 @@ fn validate_device_type(device_type: &str) -> Result<(), CliError> {
 }
 
 /// Loads and validates the configuration from a YAML file
-fn load_config_file(config_path: &PathBuf) -> Result<Config, CliError> {
+fn load_config_file(config_path: &PathBuf) -> Result<AppConfig, CliError> {
     // Read the file
     let contents = fs::read_to_string(config_path)
         .map_err(|e| CliError::ConfigFileError(format!("Failed to read config file: {}", e)))?;
 
     // Parse YAML
-    let config: Config = serde_yaml::from_str(&contents)
+    let config: AppConfig = serde_yaml::from_str(&contents)
         .map_err(|e| CliError::ConfigFileError(format!("Failed to parse YAML: {}", e)))?;
 
     // Validate device_type if specified
@@ -961,6 +961,215 @@ fn is_camera_active(app_key: &RegKey) -> bool {
     }
 }
 
+/// The current version of the CLI, extracted from Cargo.toml
+const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// GitHub API URL for fetching releases (list endpoint)
+const GITHUB_API_URL: &str =
+    "https://api.github.com/repos/timrogers/litra-autotoggle/releases";
+
+/// Timeout for update check requests in seconds
+const UPDATE_CHECK_TIMEOUT_SECS: u64 = 2;
+
+/// Response structure for GitHub releases API
+#[derive(serde::Deserialize)]
+struct GitHubRelease {
+    tag_name: String,
+    published_at: String,
+}
+
+/// Configuration file name for storing update check state
+const UPDATE_CONFIG_FILE_NAME: &str = ".litra-autotoggle.toml";
+
+/// Number of seconds in a day (24 hours)
+const SECONDS_PER_DAY: u64 = 86400;
+
+/// Configuration structure for the TOML update check state file
+#[derive(serde::Deserialize, serde::Serialize, Default)]
+struct UpdateConfig {
+    #[serde(default)]
+    update_check: UpdateCheckConfig,
+}
+
+/// Update check configuration
+#[derive(serde::Deserialize, serde::Serialize, Default)]
+struct UpdateCheckConfig {
+    /// Unix timestamp of the last update check
+    last_check_timestamp: Option<u64>,
+}
+
+/// Returns the path to the update config file in the user's home directory
+fn get_update_config_path() -> Option<std::path::PathBuf> {
+    dirs::home_dir().map(|home| home.join(UPDATE_CONFIG_FILE_NAME))
+}
+
+/// Reads the update config file, returning a default config if the file doesn't exist or can't be read
+fn read_update_config() -> UpdateConfig {
+    let Some(config_path) = get_update_config_path() else {
+        return UpdateConfig::default();
+    };
+
+    match std::fs::read_to_string(&config_path) {
+        Ok(contents) => toml::from_str(&contents).unwrap_or_default(),
+        Err(_) => UpdateConfig::default(),
+    }
+}
+
+/// Writes the update config to the config file, silently ignoring errors
+fn write_update_config(config: &UpdateConfig) {
+    let Some(config_path) = get_update_config_path() else {
+        return;
+    };
+
+    if let Ok(contents) = toml::to_string_pretty(config) {
+        let _ = std::fs::write(&config_path, contents);
+    }
+}
+
+/// Returns the current Unix timestamp in seconds
+fn current_timestamp() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// Checks if enough time has passed since the last update check (at least one day)
+fn should_check_for_updates(config: &UpdateConfig) -> bool {
+    let Some(last_check) = config.update_check.last_check_timestamp else {
+        return true; // Never checked before
+    };
+
+    let now = current_timestamp();
+    now.saturating_sub(last_check) >= SECONDS_PER_DAY
+}
+
+/// Checks if a release is old enough to be considered for update notifications (at least 72 hours)
+fn is_release_old_enough(published_at: &str) -> bool {
+    use chrono::{DateTime, Duration, Utc};
+
+    let Ok(release_time) = DateTime::parse_from_rfc3339(published_at) else {
+        return false;
+    };
+
+    let cutoff = Utc::now() - Duration::hours(72);
+    release_time < cutoff
+}
+
+/// Environment variable to disable update checks
+const DISABLE_UPDATE_CHECK_ENV: &str = "LITRA_AUTOTOGGLE_DISABLE_UPDATE_CHECK";
+
+/// Compares two semantic version strings to determine if `latest` is newer than `current`.
+/// Returns true if `latest` is a newer version.
+fn is_newer_version(latest: &str, current: &str) -> bool {
+    let parse_version = |v: &str| -> Option<(u32, u32, u32)> {
+        let parts: Vec<&str> = v.split('.').collect();
+        if parts.len() >= 3 {
+            Some((
+                parts[0].parse().ok()?,
+                parts[1].parse().ok()?,
+                parts[2].parse().ok()?,
+            ))
+        } else if parts.len() == 2 {
+            Some((parts[0].parse().ok()?, parts[1].parse().ok()?, 0))
+        } else if parts.len() == 1 {
+            Some((parts[0].parse().ok()?, 0, 0))
+        } else {
+            None
+        }
+    };
+
+    match (parse_version(latest), parse_version(current)) {
+        (Some((l_major, l_minor, l_patch)), Some((c_major, c_minor, c_patch))) => {
+            (l_major, l_minor, l_patch) > (c_major, c_minor, c_patch)
+        }
+        _ => false,
+    }
+}
+
+/// Checks for updates by fetching releases from GitHub.
+/// Returns the latest version tag if a newer version is available, None otherwise.
+/// This function will timeout after 2 seconds but will not disrupt normal operation.
+/// Set the LITRA_AUTOTOGGLE_DISABLE_UPDATE_CHECK environment variable to disable this check.
+/// The check is performed at most once per day, with the last check time stored in ~/.litra-autotoggle.toml.
+/// Only releases that are at least 72 hours old are considered.
+fn check_for_updates() -> Option<String> {
+    if std::env::var(DISABLE_UPDATE_CHECK_ENV).is_ok() {
+        return None;
+    }
+
+    let mut config = read_update_config();
+    if !should_check_for_updates(&config) {
+        return None;
+    }
+
+    config.update_check.last_check_timestamp = Some(current_timestamp());
+    write_update_config(&config);
+
+    let timeout = std::time::Duration::from_secs(UPDATE_CHECK_TIMEOUT_SECS);
+
+    let agent = ureq::Agent::new_with_config(
+        ureq::Agent::config_builder()
+            .timeout_global(Some(timeout))
+            .build(),
+    );
+
+    let mut response = match agent
+        .get(GITHUB_API_URL)
+        .header("User-Agent", format!("litra-autotoggle/{}", CURRENT_VERSION))
+        .header("Accept", "application/vnd.github.v3+json")
+        .call()
+    {
+        Ok(response) => response,
+        Err(e) => {
+            if let ureq::Error::Timeout(_) = e {
+                eprintln!(
+                    "Warning: Update check timed out after {} seconds",
+                    UPDATE_CHECK_TIMEOUT_SECS
+                );
+            }
+            return None;
+        }
+    };
+
+    let releases: Vec<GitHubRelease> = match response.body_mut().read_json() {
+        Ok(releases) => releases,
+        Err(_) => return None,
+    };
+
+    let mut best_version: Option<String> = None;
+
+    for release in releases {
+        if !is_release_old_enough(&release.published_at) {
+            continue;
+        }
+
+        let release_version = release.tag_name.trim_start_matches('v');
+
+        if is_newer_version(release_version, CURRENT_VERSION) {
+            match &best_version {
+                None => best_version = Some(release.tag_name),
+                Some(current_best) => {
+                    let current_best_version = current_best.trim_start_matches('v');
+                    if is_newer_version(release_version, current_best_version) {
+                        best_version = Some(release.tag_name);
+                    }
+                }
+            }
+        }
+    }
+
+    best_version
+}
+
+/// Generates the update notification message for the given version
+fn format_update_message(latest_version: &str) -> String {
+    format!(
+        "A new version of litra-autotoggle is available: {} (current: v{}). Download the latest release at https://github.com/timrogers/litra-autotoggle/releases/tag/{}",
+        latest_version, CURRENT_VERSION, latest_version
+    )
+}
+
 #[cfg(target_os = "macos")]
 #[tokio::main]
 async fn main() -> ExitCode {
@@ -977,6 +1186,10 @@ async fn main() -> ExitCode {
 
     let log_level = if args.verbose { "debug" } else { "info" };
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(log_level)).init();
+
+    if let Some(latest_version) = check_for_updates() {
+        warn!("{}", format_update_message(&latest_version));
+    }
 
     let result = handle_autotoggle_command(
         args.serial_number.as_deref(),
@@ -1012,6 +1225,10 @@ async fn main() -> ExitCode {
 
     let log_level = if args.verbose { "debug" } else { "info" };
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(log_level)).init();
+
+    if let Some(latest_version) = check_for_updates() {
+        warn!("{}", format_update_message(&latest_version));
+    }
 
     let result = handle_autotoggle_command(
         args.serial_number.as_deref(),
@@ -1049,6 +1266,10 @@ async fn main() -> ExitCode {
     let log_level = if args.verbose { "debug" } else { "info" };
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(log_level)).init();
 
+    if let Some(latest_version) = check_for_updates() {
+        warn!("{}", format_update_message(&latest_version));
+    }
+
     let result = handle_autotoggle_command(
         args.serial_number.as_deref(),
         args.device_path.as_deref(),
@@ -1072,6 +1293,92 @@ mod tests {
     use super::*;
     use std::io::Write;
     use tempfile::NamedTempFile;
+
+    #[test]
+    fn test_is_newer_version_major() {
+        assert!(is_newer_version("4.0.0", "3.2.0"));
+        assert!(is_newer_version("2.0.0", "1.0.0"));
+        assert!(!is_newer_version("1.0.0", "2.0.0"));
+        assert!(!is_newer_version("3.0.0", "4.0.0"));
+    }
+
+    #[test]
+    fn test_is_newer_version_minor() {
+        assert!(is_newer_version("1.4.0", "1.3.0"));
+        assert!(is_newer_version("1.2.0", "1.1.0"));
+        assert!(!is_newer_version("1.1.0", "1.2.0"));
+        assert!(!is_newer_version("1.3.0", "1.4.0"));
+    }
+
+    #[test]
+    fn test_is_newer_version_patch() {
+        assert!(is_newer_version("1.3.1", "1.3.0"));
+        assert!(is_newer_version("1.0.5", "1.0.4"));
+        assert!(!is_newer_version("1.0.4", "1.0.5"));
+        assert!(!is_newer_version("1.3.0", "1.3.1"));
+    }
+
+    #[test]
+    fn test_is_newer_version_same_version() {
+        assert!(!is_newer_version("1.3.0", "1.3.0"));
+        assert!(!is_newer_version("1.0.0", "1.0.0"));
+    }
+
+    #[test]
+    fn test_is_newer_version_edge_cases() {
+        assert!(is_newer_version("2.0", "1.9"));
+        assert!(!is_newer_version("1.9", "2.0"));
+        assert!(is_newer_version("2", "1"));
+        assert!(!is_newer_version("1", "2"));
+        assert!(!is_newer_version("invalid", "1.3.0"));
+        assert!(!is_newer_version("1.3.0", "invalid"));
+        assert!(!is_newer_version("", "1.3.0"));
+    }
+
+    #[test]
+    fn test_should_check_for_updates_never_checked() {
+        let config = UpdateConfig::default();
+        assert!(should_check_for_updates(&config));
+    }
+
+    #[test]
+    fn test_should_check_for_updates_checked_recently() {
+        let mut config = UpdateConfig::default();
+        config.update_check.last_check_timestamp = Some(current_timestamp());
+        assert!(!should_check_for_updates(&config));
+    }
+
+    #[test]
+    fn test_should_check_for_updates_checked_long_ago() {
+        let mut config = UpdateConfig::default();
+        config.update_check.last_check_timestamp =
+            Some(current_timestamp() - SECONDS_PER_DAY - 1);
+        assert!(should_check_for_updates(&config));
+    }
+
+    #[test]
+    fn test_should_check_for_updates_exactly_one_day() {
+        let mut config = UpdateConfig::default();
+        config.update_check.last_check_timestamp = Some(current_timestamp() - SECONDS_PER_DAY);
+        assert!(should_check_for_updates(&config));
+    }
+
+    #[test]
+    fn test_is_release_old_enough() {
+        assert!(is_release_old_enough("2020-01-01T00:00:00Z"));
+        assert!(!is_release_old_enough("2099-01-01T00:00:00Z"));
+        assert!(!is_release_old_enough("invalid"));
+    }
+
+    #[test]
+    fn test_format_update_message() {
+        let message = format_update_message("v1.4.0");
+        assert!(message.contains("v1.4.0"));
+        assert!(message.contains(CURRENT_VERSION));
+        assert!(
+            message.contains("https://github.com/timrogers/litra-autotoggle/releases/tag/v1.4.0")
+        );
+    }
 
     /// Helper function to create a temporary YAML file with given content
     fn create_temp_config(content: &str) -> NamedTempFile {

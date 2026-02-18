@@ -56,7 +56,11 @@ struct AppConfig {
 
 /// Automatically turn your Logitech Litra device on when your webcam turns on, and off when your webcam turns off.
 #[derive(Debug, Parser)]
-#[clap(name = "litra-autotoggle", version, after_long_help = "This CLI automatically checks for updates once per day. To disable update checks, set the LITRA_AUTOTOGGLE_DISABLE_UPDATE_CHECK environment variable to any value.")]
+#[clap(
+    name = "litra-autotoggle",
+    version,
+    after_long_help = "This CLI automatically checks for updates once per day. To disable update checks, set the LITRA_AUTOTOGGLE_DISABLE_UPDATE_CHECK environment variable to any value."
+)]
 struct Cli {
     #[clap(
         long,
@@ -965,8 +969,7 @@ fn is_camera_active(app_key: &RegKey) -> bool {
 const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// GitHub API URL for fetching releases (list endpoint)
-const GITHUB_API_URL: &str =
-    "https://api.github.com/repos/timrogers/litra-autotoggle/releases";
+const GITHUB_API_URL: &str = "https://api.github.com/repos/timrogers/litra-autotoggle/releases";
 
 /// Timeout for update check requests in seconds
 const UPDATE_CHECK_TIMEOUT_SECS: u64 = 2;
@@ -1116,7 +1119,10 @@ fn check_for_updates() -> Option<String> {
 
     let mut response = match agent
         .get(GITHUB_API_URL)
-        .header("User-Agent", format!("litra-autotoggle/{}", CURRENT_VERSION))
+        .header(
+            "User-Agent",
+            format!("litra-autotoggle/{}", CURRENT_VERSION),
+        )
         .header("Accept", "application/vnd.github.v3+json")
         .call()
     {
@@ -1351,8 +1357,7 @@ mod tests {
     #[test]
     fn test_should_check_for_updates_checked_long_ago() {
         let mut config = UpdateConfig::default();
-        config.update_check.last_check_timestamp =
-            Some(current_timestamp() - SECONDS_PER_DAY - 1);
+        config.update_check.last_check_timestamp = Some(current_timestamp() - SECONDS_PER_DAY - 1);
         assert!(should_check_for_updates(&config));
     }
 

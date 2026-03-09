@@ -23,6 +23,59 @@ use winreg::enums::*;
 #[cfg(target_os = "windows")]
 use winreg::RegKey;
 
+fn is_newer_version(latest: &str, current: &str) -> bool {
+    let parse = |v: &str| -> Option<(u64, u64, u64)> {
+        let mut parts = v.split('.');
+        let major = parts.next()?.parse().ok()?;
+        let minor = parts.next()?.parse().ok()?;
+        let patch = parts.next()?.parse().ok()?;
+        Some((major, minor, patch))
+    };
+    match (parse(latest), parse(current)) {
+        (Some(l), Some(c)) => l > c,
+        _ => false,
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct GitHubRelease {
+    tag_name: String,
+}
+
+async fn check_for_updates() {
+    let current_version = env!("CARGO_PKG_VERSION");
+    let client = match reqwest::Client::builder()
+        .user_agent(format!("litra-autotoggle/{}", current_version))
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+    {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+
+    let response = match client
+        .get("https://api.github.com/repos/timrogers/litra-autotoggle/releases/latest")
+        .send()
+        .await
+    {
+        Ok(r) => r,
+        Err(_) => return,
+    };
+
+    let release: GitHubRelease = match response.json().await {
+        Ok(r) => r,
+        Err(_) => return,
+    };
+
+    let latest_version = release.tag_name.trim_start_matches('v');
+    if is_newer_version(latest_version, current_version) {
+        warn!(
+            "A new version of litra-autotoggle is available: v{} (you're running v{}). Download it from https://github.com/timrogers/litra-autotoggle/releases/latest",
+            latest_version, current_version
+        );
+    }
+}
+
 /// Configuration structure for YAML file deserialization.
 /// Field names use underscores to match YAML convention (e.g. serial_number).
 #[derive(Debug, Deserialize, Serialize, Default)]
@@ -978,6 +1031,8 @@ async fn main() -> ExitCode {
     let log_level = if args.verbose { "debug" } else { "info" };
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(log_level)).init();
 
+    tokio::spawn(check_for_updates());
+
     let result = handle_autotoggle_command(
         args.serial_number.as_deref(),
         args.device_path.as_deref(),
@@ -1012,6 +1067,8 @@ async fn main() -> ExitCode {
 
     let log_level = if args.verbose { "debug" } else { "info" };
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(log_level)).init();
+
+    tokio::spawn(check_for_updates());
 
     let result = handle_autotoggle_command(
         args.serial_number.as_deref(),
@@ -1048,6 +1105,8 @@ async fn main() -> ExitCode {
 
     let log_level = if args.verbose { "debug" } else { "info" };
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(log_level)).init();
+
+    tokio::spawn(check_for_updates());
 
     let result = handle_autotoggle_command(
         args.serial_number.as_deref(),

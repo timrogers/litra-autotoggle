@@ -283,8 +283,10 @@ fn merge_config_with_cli(mut cli: Cli) -> Result<Cli, CliError> {
             }
         }
         // Only use config delay if CLI has the default value (1500)
-        if cli.delay == 1500 && config.delay.is_some() {
-            cli.delay = config.delay.unwrap();
+        if cli.delay == 1500 {
+            if let Some(delay) = config.delay {
+                cli.delay = delay;
+            }
         }
         if !cli.verbose {
             cli.verbose = config.verbose.unwrap_or(false);
@@ -469,10 +471,10 @@ fn turn_off_all_supported_devices_and_log(
 }
 
 fn print_device_not_found_log(serial_number: Option<&str>) {
-    if serial_number.is_some() {
+    if let Some(serial_number) = serial_number {
         warn!(
             "Litra device with serial number {} not found",
-            serial_number.unwrap()
+            serial_number
         );
     } else {
         warn!("No Litra devices found");

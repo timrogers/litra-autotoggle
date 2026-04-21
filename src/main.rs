@@ -2,26 +2,21 @@ use clap::Parser;
 #[cfg(target_os = "linux")]
 use inotify::{EventMask, Inotify, WatchMask};
 use litra::{Device, DeviceError, DeviceHandle, Litra};
-#[cfg(target_os = "macos")]
-use log::debug;
 use log::{error, info, warn};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::fs;
 use std::path::PathBuf;
 use std::process::ExitCode;
-#[cfg(target_os = "macos")]
-use std::process::Stdio;
 use std::sync::Arc;
-#[cfg(target_os = "macos")]
-use tokio::io::{AsyncBufReadExt, BufReader};
-#[cfg(target_os = "macos")]
-use tokio::process::Command;
 use tokio::sync::Mutex;
 #[cfg(target_os = "windows")]
 use winreg::enums::*;
 #[cfg(target_os = "windows")]
 use winreg::RegKey;
+
+#[cfg(target_os = "macos")]
+mod macos_camera;
 
 /// Configuration structure for YAML file deserialization.
 /// Field names use underscores to match YAML convention (e.g. serial_number).
@@ -517,104 +512,91 @@ async fn handle_autotoggle_command(
         }
     }
 
-    info!("Starting `log` process to listen for video device events...");
-
-    let mut child = Command::new("log")
-        .arg("stream")
-        .arg("--predicate")
-        .arg("subsystem == \"com.apple.cmio\" AND (eventMessage CONTAINS \"AVCaptureSession_Tundra startRunning\" || eventMessage CONTAINS \"AVCaptureSession_Tundra stopRunning\")")
-        .stdout(Stdio::piped())
-        .spawn()?;
-
-    let stdout = child
-        .stdout
-        .take()
-        .expect("Failed to start `log` process to listen for video device events");
-    let mut reader = BufReader::new(stdout).lines();
-
-    info!("Listening for video device events...");
+    info!("Watching for video device events via CoreMediaIO...");
 
     // Add variables for throttling
     let mut pending_action: Option<tokio::task::JoinHandle<()>> = None;
     let desired_state = std::sync::Arc::new(tokio::sync::Mutex::new(None));
 
-    while let Some(log_line) = reader
-        .next_line()
-        .await
-        .expect("Failed to read log line from `log` process when listening for video device events")
-    {
-        if !log_line.starts_with("Filtering the log data") {
-            debug!("Log line: {log_line}");
+    // Track the last observed aggregate state so we only emit events on
+    // transitions. Initialise from the current state so we don't fire a
+    // spurious "off" event at startup.
+    let mut last_running = macos_camera::any_camera_running();
+    let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(500));
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    // Consume the immediate first tick so the loop starts polling on the
+    // configured cadence.
+    interval.tick().await;
 
-            // Update desired state based on the event
-            if log_line.contains("AVCaptureSession_Tundra startRunning") {
-                info!("Detected that a video device has been turned on.");
+    loop {
+        interval.tick().await;
 
-                let mut state = desired_state.lock().await;
-                *state = Some(true);
-            } else if log_line.contains("AVCaptureSession_Tundra stopRunning") {
-                info!("Detected that a video device has been turned off.");
-
-                let mut state = desired_state.lock().await;
-                *state = Some(false);
-            }
-
-            // Cancel any pending action
-            if let Some(handle) = pending_action.take() {
-                handle.abort();
-            }
-
-            // Clone variables for the async task
-            let desired_state_clone = desired_state.clone();
-            let context_clone = context.clone();
-            let serial_number_clone = serial_number.map(|s| s.to_string());
-            let device_path_clone = device_path.map(|s| s.to_string());
-            let device_type_clone = device_type.map(|s| s.to_string());
-
-            // Start a new delayed action
-            pending_action = Some(tokio::spawn(async move {
-                tokio::time::sleep(tokio::time::Duration::from_millis(delay)).await;
-
-                let state = {
-                    let mut state = desired_state_clone.lock().await;
-                    state.take()
-                };
-
-                if let Some(state) = state {
-                    let mut context_lock = context_clone.lock().await;
-                    if state {
-                        info!("Attempting to turn on Litra device(s)...");
-                        let _ = turn_on_all_supported_devices_and_log(
-                            &mut context_lock,
-                            serial_number_clone.as_deref(),
-                            device_path_clone.as_deref(),
-                            device_type_clone.as_deref(),
-                            require_device,
-                            back,
-                        );
-                    } else {
-                        info!("Attempting to turn off Litra device(s)...");
-                        let _ = turn_off_all_supported_devices_and_log(
-                            &mut context_lock,
-                            serial_number_clone.as_deref(),
-                            device_path_clone.as_deref(),
-                            device_type_clone.as_deref(),
-                            require_device,
-                            back,
-                        );
-                    }
-                }
-            }));
+        let currently_running = macos_camera::any_camera_running();
+        if currently_running == last_running {
+            continue;
         }
+        last_running = currently_running;
+
+        // Update desired state based on the event
+        if currently_running {
+            info!("Detected that a video device has been turned on.");
+
+            let mut state = desired_state.lock().await;
+            *state = Some(true);
+        } else {
+            info!("Detected that a video device has been turned off.");
+
+            let mut state = desired_state.lock().await;
+            *state = Some(false);
+        }
+
+        // Cancel any pending action
+        if let Some(handle) = pending_action.take() {
+            handle.abort();
+        }
+
+        // Clone variables for the async task
+        let desired_state_clone = desired_state.clone();
+        let context_clone = context.clone();
+        let serial_number_clone = serial_number.map(|s| s.to_string());
+        let device_path_clone = device_path.map(|s| s.to_string());
+        let device_type_clone = device_type.map(|s| s.to_string());
+
+        // Start a new delayed action
+        pending_action = Some(tokio::spawn(async move {
+            tokio::time::sleep(tokio::time::Duration::from_millis(delay)).await;
+
+            let state = {
+                let mut state = desired_state_clone.lock().await;
+                state.take()
+            };
+
+            if let Some(state) = state {
+                let mut context_lock = context_clone.lock().await;
+                if state {
+                    info!("Attempting to turn on Litra device(s)...");
+                    let _ = turn_on_all_supported_devices_and_log(
+                        &mut context_lock,
+                        serial_number_clone.as_deref(),
+                        device_path_clone.as_deref(),
+                        device_type_clone.as_deref(),
+                        require_device,
+                        back,
+                    );
+                } else {
+                    info!("Attempting to turn off Litra device(s)...");
+                    let _ = turn_off_all_supported_devices_and_log(
+                        &mut context_lock,
+                        serial_number_clone.as_deref(),
+                        device_path_clone.as_deref(),
+                        device_type_clone.as_deref(),
+                        require_device,
+                        back,
+                    );
+                }
+            }
+        }));
     }
-
-    let status = child.wait().await.expect(
-        "Something went wrong with the `log` process when listening for video device events",
-    );
-
-    Err(CliError::IoError(std::io::Error::other(format!(
-        "`log` process exited unexpectedly when listening for video device events - {status}"
-    ))))
 }
 
 #[cfg(target_os = "linux")]

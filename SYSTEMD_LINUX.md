@@ -2,7 +2,7 @@
 
 ## Installation
 
-1. Install the `litra-autotoggle` binary to `~./local/bin`:
+1. Install the `litra-autotoggle` binary to `~/.local/bin`:
 
 2. Copy the systemd service file:
    ```bash

@@ -520,8 +520,10 @@ async fn handle_autotoggle_command(
 
     // Track the last observed aggregate state so we only emit events on
     // transitions. Initialise from the current state so we don't fire a
-    // spurious "off" event at startup.
-    let mut last_running = macos_camera::any_camera_running();
+    // spurious "off" event at startup. If the initial query fails, assume
+    // no camera is running; subsequent transient errors will be ignored
+    // (see below).
+    let mut last_running = macos_camera::any_camera_running().unwrap_or(false);
     let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(500));
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     // Consume the immediate first tick so the loop starts polling on the
@@ -531,7 +533,19 @@ async fn handle_autotoggle_command(
     loop {
         interval.tick().await;
 
-        let currently_running = macos_camera::any_camera_running();
+        let currently_running = match macos_camera::any_camera_running() {
+            Some(running) => running,
+            None => {
+                // CoreMediaIO query failed; keep the previous observed
+                // state rather than risk a spurious transition.
+                warn!(
+                    "Failed to query CoreMediaIO for camera state; \
+                     keeping previously observed state ({}).",
+                    if last_running { "on" } else { "off" }
+                );
+                continue;
+            }
+        };
         if currently_running == last_running {
             continue;
         }

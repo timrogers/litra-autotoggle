@@ -1173,7 +1173,7 @@ fn check_for_updates() -> Option<String> {
 /// Generates the update notification message for the given version
 fn format_update_message(latest_version: &str) -> String {
     format!(
-        "A new version of litra-autotoggle is available: {} (current: v{}). Download the latest release at https://github.com/timrogers/litra-autotoggle/releases/tag/{}",
+        "A new version of litra-autotoggle is available: {} (current: v{}). If you installed from Homebrew, you can upgrade by running `brew upgrade litra-autotoggle`. Otherwise, you can download the latest release at https://github.com/timrogers/litra-autotoggle/releases/tag/{}",
         latest_version, CURRENT_VERSION, latest_version
     )
 }
@@ -1196,7 +1196,7 @@ async fn main() -> ExitCode {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(log_level)).init();
 
     if let Some(latest_version) = check_for_updates() {
-        warn!("{}", format_update_message(&latest_version));
+        info!("{}", format_update_message(&latest_version));
     }
 
     let result = handle_autotoggle_command(
@@ -1235,7 +1235,7 @@ async fn main() -> ExitCode {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(log_level)).init();
 
     if let Some(latest_version) = check_for_updates() {
-        warn!("{}", format_update_message(&latest_version));
+        info!("{}", format_update_message(&latest_version));
     }
 
     let result = handle_autotoggle_command(
@@ -1275,7 +1275,7 @@ async fn main() -> ExitCode {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(log_level)).init();
 
     if let Some(latest_version) = check_for_updates() {
-        warn!("{}", format_update_message(&latest_version));
+        info!("{}", format_update_message(&latest_version));
     }
 
     let result = handle_autotoggle_command(
@@ -1382,6 +1382,7 @@ mod tests {
         let message = format_update_message("v1.4.0");
         assert!(message.contains("v1.4.0"));
         assert!(message.contains(CURRENT_VERSION));
+        assert!(message.contains("brew upgrade litra-autotoggle"));
         assert!(
             message.contains("https://github.com/timrogers/litra-autotoggle/releases/tag/v1.4.0")
         );

@@ -46,6 +46,10 @@ To customize the background service's configuration, edit the config file at `$(
 
 ![macOS warning](https://github.com/user-attachments/assets/7abd6d99-0481-4684-8079-a6d80e0fcaea)
 
+### In the background, using systemd (Linux only)
+
+See [SYSTEMD_LINUX.md](SYSTEMD_LINUX.md) for setup instructions.
+
 ### From the command line
 
 Just run `litra-autotoggle`. By default, all connected Litra devices will turn on when your webcam turns on, and off when your webcam turns off.

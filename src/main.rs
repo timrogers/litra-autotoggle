@@ -18,6 +18,33 @@ use winreg::RegKey;
 #[cfg(target_os = "macos")]
 mod macos_camera;
 
+#[derive(Debug, Deserialize, Serialize, Default, Clone)]
+#[serde(deny_unknown_fields)]
+struct LightStateConfig {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    power: Option<bool>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    brightness: Option<u16>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    temperature: Option<u16>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ResolvedLightState {
+    power: bool,
+    brightness: Option<u16>,
+    temperature: Option<u16>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct DeviceFilter {
+    serial_number: Option<String>,
+    device_path: Option<String>,
+    device_type: Option<String>,
+}
+
 /// Configuration structure for YAML file deserialization.
 /// Field names use underscores to match YAML convention (e.g. serial_number).
 #[derive(Debug, Deserialize, Serialize, Default)]
@@ -47,6 +74,12 @@ struct AppConfig {
 
     #[serde(skip_serializing_if = "Option::is_none")]
     back: Option<bool>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    on_state: Option<LightStateConfig>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    off_state: Option<LightStateConfig>,
 }
 
 /// Automatically turn your Logitech Litra device on when your webcam turns on, and off when your webcam turns off.
@@ -119,6 +152,41 @@ struct Cli {
         help = "Toggle the back light on Litra Beam LX devices. When enabled, the back light will be turned on/off together with the front light."
     )]
     back: bool,
+
+    #[clap(
+        long,
+        value_name = "BOOL",
+        help = "Whether to turn the light on when the webcam turns on (default: true). Set to false to skip turning on."
+    )]
+    on_power: Option<bool>,
+
+    #[clap(long, help = "Brightness in lumens to set when the webcam turns on.")]
+    on_brightness: Option<u16>,
+
+    #[clap(
+        long,
+        help = "Color temperature in Kelvin to set when the webcam turns on. Must be a multiple of 100, in the range 2700–6500."
+    )]
+    on_temperature: Option<u16>,
+
+    #[clap(
+        long,
+        action,
+        help = "Keep the light on when the webcam turns off (default: turn off)."
+    )]
+    off_power: bool,
+
+    #[clap(
+        long,
+        help = "Brightness in lumens to set when the webcam turns off. Implies --off-power."
+    )]
+    off_brightness: Option<u16>,
+
+    #[clap(
+        long,
+        help = "Color temperature in Kelvin to set when the webcam turns off. Implies --off-power. Must be a multiple of 100, in the range 2700–6500."
+    )]
+    off_temperature: Option<u16>,
 }
 
 fn check_device_filters<'a>(
@@ -289,6 +357,31 @@ fn merge_config_with_cli(mut cli: Cli) -> Result<Cli, CliError> {
         if !cli.back {
             cli.back = config.back.unwrap_or(false);
         }
+        if let Some(ref on) = config.on_state {
+            if cli.on_power.is_none() {
+                cli.on_power = on.power;
+            }
+            if cli.on_brightness.is_none() {
+                cli.on_brightness = on.brightness;
+            }
+            if cli.on_temperature.is_none() {
+                cli.on_temperature = on.temperature;
+            }
+        }
+        if let Some(ref off) = config.off_state {
+            if !cli.off_power {
+                cli.off_power = match off.power {
+                    Some(p) => p,
+                    None => off.brightness.is_some() || off.temperature.is_some(),
+                };
+            }
+            if cli.off_brightness.is_none() {
+                cli.off_brightness = off.brightness;
+            }
+            if cli.off_temperature.is_none() {
+                cli.off_temperature = off.temperature;
+            }
+        }
     }
 
     // Validate device_type if specified via CLI or config
@@ -297,6 +390,29 @@ fn merge_config_with_cli(mut cli: Cli) -> Result<Cli, CliError> {
     }
 
     Ok(cli)
+}
+
+fn resolve_filter(cli: &Cli) -> DeviceFilter {
+    DeviceFilter {
+        serial_number: cli.serial_number.clone(),
+        device_path: cli.device_path.clone(),
+        device_type: cli.device_type.clone(),
+    }
+}
+
+fn resolve_states(cli: &Cli) -> (ResolvedLightState, ResolvedLightState) {
+    (
+        ResolvedLightState {
+            power: cli.on_power.unwrap_or(true),
+            brightness: cli.on_brightness,
+            temperature: cli.on_temperature,
+        },
+        ResolvedLightState {
+            power: cli.off_power,
+            brightness: cli.off_brightness,
+            temperature: cli.off_temperature,
+        },
+    )
 }
 
 fn get_all_supported_devices(
@@ -379,86 +495,73 @@ fn toggle_back_light_if_applicable(device_handle: &DeviceHandle, on: bool, back:
     }
 }
 
-fn turn_on_all_supported_devices_and_log(
-    context: &mut Litra,
-    serial_number: Option<&str>,
-    device_path: Option<&str>,
-    device_type: Option<&str>,
-    require_device: bool,
-    back: bool,
-) -> Result<(), CliError> {
-    let device_handles = get_all_supported_devices(
-        context,
-        serial_number,
-        device_path,
-        device_type,
-        require_device,
-    )?;
+fn apply_light_state(device_handle: &DeviceHandle, state: ResolvedLightState, back: bool) {
+    let serial = get_serial_number_with_fallback(device_handle);
+    let action = if state.power { "on" } else { "off" };
+    info!(
+        "Turning {} {} device (serial number: {})",
+        action,
+        device_handle.device_type(),
+        serial
+    );
 
-    if device_handles.is_empty() {
-        print_device_not_found_log(serial_number);
-    } else {
-        for device_handle in device_handles {
-            info!(
-                "Turning on {} device (serial number: {})",
-                device_handle.device_type(),
-                get_serial_number_with_fallback(&device_handle)
-            );
+    if let Err(e) = device_handle.set_on(state.power) {
+        warn!(
+            "Failed to turn {} {} device (serial number: {}): {}",
+            action,
+            device_handle.device_type(),
+            serial,
+            e
+        );
+        return;
+    }
 
-            // Ignore errors for individual devices when targeting multiple
-            if let Err(e) = device_handle.set_on(true) {
+    if state.power {
+        if let Some(b) = state.brightness {
+            if let Err(e) = device_handle.set_brightness_in_lumen(b) {
                 warn!(
-                    "Failed to turn on {} device (serial number: {}): {}",
+                    "Failed to set brightness on {} device (serial number: {}): {}",
                     device_handle.device_type(),
-                    get_serial_number_with_fallback(&device_handle),
+                    serial,
                     e
                 );
             }
-
-            toggle_back_light_if_applicable(&device_handle, true, back);
+        }
+        if let Some(t) = state.temperature {
+            if let Err(e) = device_handle.set_temperature_in_kelvin(t) {
+                warn!(
+                    "Failed to set temperature on {} device (serial number: {}): {}",
+                    device_handle.device_type(),
+                    serial,
+                    e
+                );
+            }
         }
     }
 
-    Ok(())
+    toggle_back_light_if_applicable(device_handle, state.power, back);
 }
 
-fn turn_off_all_supported_devices_and_log(
+fn apply_state_to_all_supported_devices_and_log(
     context: &mut Litra,
-    serial_number: Option<&str>,
-    device_path: Option<&str>,
-    device_type: Option<&str>,
+    filter: &DeviceFilter,
     require_device: bool,
     back: bool,
+    state: ResolvedLightState,
 ) -> Result<(), CliError> {
     let device_handles = get_all_supported_devices(
         context,
-        serial_number,
-        device_path,
-        device_type,
+        filter.serial_number.as_deref(),
+        filter.device_path.as_deref(),
+        filter.device_type.as_deref(),
         require_device,
     )?;
 
     if device_handles.is_empty() {
-        print_device_not_found_log(serial_number);
+        print_device_not_found_log(filter.serial_number.as_deref());
     } else {
         for device_handle in device_handles {
-            info!(
-                "Turning off {} device (serial number: {})",
-                device_handle.device_type(),
-                get_serial_number_with_fallback(&device_handle)
-            );
-
-            // Ignore errors for individual devices when targeting multiple
-            if let Err(e) = device_handle.set_on(false) {
-                warn!(
-                    "Failed to turn off {} device (serial number: {}): {}",
-                    device_handle.device_type(),
-                    get_serial_number_with_fallback(&device_handle),
-                    e
-                );
-            }
-
-            toggle_back_light_if_applicable(&device_handle, false, back);
+            apply_light_state(&device_handle, state, back);
         }
     }
 
@@ -485,12 +588,12 @@ fn get_serial_number_with_fallback(device_handle: &DeviceHandle) -> String {
 
 #[cfg(target_os = "macos")]
 async fn handle_autotoggle_command(
-    serial_number: Option<&str>,
-    device_path: Option<&str>,
-    device_type: Option<&str>,
+    filter: DeviceFilter,
     require_device: bool,
     delay: u64,
     back: bool,
+    on_state: ResolvedLightState,
+    off_state: ResolvedLightState,
 ) -> CliResult {
     // Wrap context in Arc<Mutex<>> to enable sharing across tasks
     let context = Arc::new(Mutex::new(Litra::new()?));
@@ -500,13 +603,13 @@ async fn handle_autotoggle_command(
         let mut context_lock = context.lock().await;
         let device_handles = get_all_supported_devices(
             &mut context_lock,
-            serial_number,
-            device_path,
-            device_type,
+            filter.serial_number.as_deref(),
+            filter.device_path.as_deref(),
+            filter.device_type.as_deref(),
             require_device,
         )?;
         if device_handles.is_empty() {
-            print_device_not_found_log(serial_number);
+            print_device_not_found_log(filter.serial_number.as_deref());
         } else {
             for device_handle in device_handles {
                 info!(
@@ -578,9 +681,7 @@ async fn handle_autotoggle_command(
         // Clone variables for the async task
         let desired_state_clone = desired_state.clone();
         let context_clone = context.clone();
-        let serial_number_clone = serial_number.map(|s| s.to_string());
-        let device_path_clone = device_path.map(|s| s.to_string());
-        let device_type_clone = device_type.map(|s| s.to_string());
+        let filter_clone = filter.clone();
 
         // Start a new delayed action
         pending_action = Some(tokio::spawn(async move {
@@ -593,27 +694,22 @@ async fn handle_autotoggle_command(
 
             if let Some(state) = state {
                 let mut context_lock = context_clone.lock().await;
-                if state {
-                    info!("Attempting to turn on Litra device(s)...");
-                    let _ = turn_on_all_supported_devices_and_log(
-                        &mut context_lock,
-                        serial_number_clone.as_deref(),
-                        device_path_clone.as_deref(),
-                        device_type_clone.as_deref(),
-                        require_device,
-                        back,
-                    );
+                let (event, state_to_apply) = if state {
+                    ("on", on_state)
                 } else {
-                    info!("Attempting to turn off Litra device(s)...");
-                    let _ = turn_off_all_supported_devices_and_log(
-                        &mut context_lock,
-                        serial_number_clone.as_deref(),
-                        device_path_clone.as_deref(),
-                        device_type_clone.as_deref(),
-                        require_device,
-                        back,
-                    );
-                }
+                    ("off", off_state)
+                };
+                info!(
+                    "Webcam turned {}, applying {}-state to Litra device(s)...",
+                    event, event
+                );
+                let _ = apply_state_to_all_supported_devices_and_log(
+                    &mut context_lock,
+                    &filter_clone,
+                    require_device,
+                    back,
+                    state_to_apply,
+                );
             }
         }));
     }
@@ -621,13 +717,13 @@ async fn handle_autotoggle_command(
 
 #[cfg(target_os = "linux")]
 async fn handle_autotoggle_command(
-    serial_number: Option<&str>,
-    device_path: Option<&str>,
-    device_type: Option<&str>,
+    filter: DeviceFilter,
     require_device: bool,
     video_device: Option<&str>,
     delay: u64,
     back: bool,
+    on_state: ResolvedLightState,
+    off_state: ResolvedLightState,
 ) -> CliResult {
     // Wrap context in Arc<Mutex<>> to enable sharing across tasks
     let context = Arc::new(Mutex::new(Litra::new()?));
@@ -637,13 +733,13 @@ async fn handle_autotoggle_command(
         let mut context_lock = context.lock().await;
         let device_handles = get_all_supported_devices(
             &mut context_lock,
-            serial_number,
-            device_path,
-            device_type,
+            filter.serial_number.as_deref(),
+            filter.device_path.as_deref(),
+            filter.device_type.as_deref(),
             require_device,
         )?;
         if device_handles.is_empty() {
-            print_device_not_found_log(serial_number);
+            print_device_not_found_log(filter.serial_number.as_deref());
         } else {
             for device_handle in device_handles {
                 info!(
@@ -726,9 +822,7 @@ async fn handle_autotoggle_command(
         // Clone variables for the async task
         let desired_state_clone = desired_state.clone();
         let context_clone = context.clone();
-        let serial_number_clone = serial_number.map(|s| s.to_string());
-        let device_path_clone = device_path.map(|s| s.to_string());
-        let device_type_clone = device_type.map(|s| s.to_string());
+        let filter_clone = filter.clone();
 
         // Start a new delayed action
         pending_action = Some(tokio::spawn(async move {
@@ -741,27 +835,22 @@ async fn handle_autotoggle_command(
 
             if let Some(state) = state {
                 let mut context_lock = context_clone.lock().await;
-                if state {
-                    info!("Attempting to turn on Litra device(s)...");
-                    let _ = turn_on_all_supported_devices_and_log(
-                        &mut context_lock,
-                        serial_number_clone.as_deref(),
-                        device_path_clone.as_deref(),
-                        device_type_clone.as_deref(),
-                        require_device,
-                        back,
-                    );
+                let (event, state_to_apply) = if state {
+                    ("on", on_state)
                 } else {
-                    info!("Attempting to turn off Litra device(s)...");
-                    let _ = turn_off_all_supported_devices_and_log(
-                        &mut context_lock,
-                        serial_number_clone.as_deref(),
-                        device_path_clone.as_deref(),
-                        device_type_clone.as_deref(),
-                        require_device,
-                        back,
-                    );
-                }
+                    ("off", off_state)
+                };
+                info!(
+                    "Webcam turned {}, applying {}-state to Litra device(s)...",
+                    event, event
+                );
+                let _ = apply_state_to_all_supported_devices_and_log(
+                    &mut context_lock,
+                    &filter_clone,
+                    require_device,
+                    back,
+                    state_to_apply,
+                );
             }
         }));
     }
@@ -779,12 +868,12 @@ const REGISTRY_POLL_INTERVAL_MS: u64 = 500;
 
 #[cfg(target_os = "windows")]
 async fn handle_autotoggle_command(
-    serial_number: Option<&str>,
-    device_path: Option<&str>,
-    device_type: Option<&str>,
+    filter: DeviceFilter,
     require_device: bool,
     delay: u64,
     back: bool,
+    on_state: ResolvedLightState,
+    off_state: ResolvedLightState,
 ) -> CliResult {
     // Wrap context in Arc<Mutex<>> to enable sharing across tasks
     let context = Arc::new(Mutex::new(Litra::new()?));
@@ -794,13 +883,13 @@ async fn handle_autotoggle_command(
         let mut context_lock = context.lock().await;
         let device_handles = get_all_supported_devices(
             &mut context_lock,
-            serial_number,
-            device_path,
-            device_type,
+            filter.serial_number.as_deref(),
+            filter.device_path.as_deref(),
+            filter.device_type.as_deref(),
             require_device,
         )?;
         if device_handles.is_empty() {
-            print_device_not_found_log(serial_number);
+            print_device_not_found_log(filter.serial_number.as_deref());
         } else {
             for device_handle in device_handles {
                 info!(
@@ -896,9 +985,7 @@ async fn handle_autotoggle_command(
             // Clone variables for the async task
             let desired_state_clone = desired_state.clone();
             let context_clone = context.clone();
-            let serial_number_clone = serial_number.map(|s| s.to_string());
-            let device_path_clone = device_path.map(|s| s.to_string());
-            let device_type_clone = device_type.map(|s| s.to_string());
+            let filter_clone = filter.clone();
 
             // Start a new delayed action
             pending_action = Some(tokio::spawn(async move {
@@ -911,27 +998,22 @@ async fn handle_autotoggle_command(
 
                 if let Some(state) = state {
                     let mut context_lock = context_clone.lock().await;
-                    if state {
-                        info!("Attempting to turn on Litra device(s)...");
-                        let _ = turn_on_all_supported_devices_and_log(
-                            &mut context_lock,
-                            serial_number_clone.as_deref(),
-                            device_path_clone.as_deref(),
-                            device_type_clone.as_deref(),
-                            require_device,
-                            back,
-                        );
+                    let (event, state_to_apply) = if state {
+                        ("on", on_state)
                     } else {
-                        info!("Attempting to turn off Litra device(s)...");
-                        let _ = turn_off_all_supported_devices_and_log(
-                            &mut context_lock,
-                            serial_number_clone.as_deref(),
-                            device_path_clone.as_deref(),
-                            device_type_clone.as_deref(),
-                            require_device,
-                            back,
-                        );
-                    }
+                        ("off", off_state)
+                    };
+                    info!(
+                        "Webcam turned {}, applying {}-state to Litra device(s)...",
+                        event, event
+                    );
+                    let _ = apply_state_to_all_supported_devices_and_log(
+                        &mut context_lock,
+                        &filter_clone,
+                        require_device,
+                        back,
+                        state_to_apply,
+                    );
                 }
             }));
         }
@@ -1195,13 +1277,15 @@ async fn main() -> ExitCode {
         info!("{}", format_update_message(&latest_version));
     }
 
+    let filter = resolve_filter(&args);
+    let (on_state, off_state) = resolve_states(&args);
     let result = handle_autotoggle_command(
-        args.serial_number.as_deref(),
-        args.device_path.as_deref(),
-        args.device_type.as_deref(),
+        filter,
         args.require_device,
         args.delay,
         args.back,
+        on_state,
+        off_state,
     )
     .await;
 
@@ -1234,14 +1318,16 @@ async fn main() -> ExitCode {
         info!("{}", format_update_message(&latest_version));
     }
 
+    let filter = resolve_filter(&args);
+    let (on_state, off_state) = resolve_states(&args);
     let result = handle_autotoggle_command(
-        args.serial_number.as_deref(),
-        args.device_path.as_deref(),
-        args.device_type.as_deref(),
+        filter,
         args.require_device,
         args.video_device.as_deref(),
         args.delay,
         args.back,
+        on_state,
+        off_state,
     )
     .await;
 
@@ -1274,13 +1360,15 @@ async fn main() -> ExitCode {
         info!("{}", format_update_message(&latest_version));
     }
 
+    let filter = resolve_filter(&args);
+    let (on_state, off_state) = resolve_states(&args);
     let result = handle_autotoggle_command(
-        args.serial_number.as_deref(),
-        args.device_path.as_deref(),
-        args.device_type.as_deref(),
+        filter,
         args.require_device,
         args.delay,
         args.back,
+        on_state,
+        off_state,
     )
     .await;
 
@@ -1391,6 +1479,20 @@ mod tests {
             .expect("Failed to write to temp file");
         file.flush().expect("Failed to flush temp file");
         file
+    }
+
+    // Regression test: explicit `off_state.power: false` must win over the
+    // brightness-implies-power-on inference.
+    #[test]
+    fn test_merge_off_state_explicit_power_false_with_brightness() {
+        let temp = create_temp_config("off_state:\n  power: false\n  brightness: 80\n");
+        let cli = Cli::parse_from([
+            "litra-autotoggle",
+            "--config-file",
+            temp.path().to_str().unwrap(),
+        ]);
+        let cli = merge_config_with_cli(cli).unwrap();
+        assert!(!cli.off_power);
     }
 
     #[test]
@@ -1595,6 +1697,47 @@ delay: 2000
 
         assert_eq!(config.device_type, Some("glow".to_string()));
         assert_eq!(config.delay, Some(2000));
+    }
+
+    #[test]
+    fn test_load_valid_config_on_and_off_state() {
+        let config_content = r#"
+on_state:
+  brightness: 250
+  temperature: 4500
+off_state:
+  power: true
+  brightness: 80
+"#;
+        let temp_file = create_temp_config(config_content);
+        let config = load_config_file(&temp_file.path().to_path_buf()).unwrap();
+
+        let on_state = config.on_state.unwrap();
+        assert_eq!(on_state.brightness, Some(250));
+        assert_eq!(on_state.temperature, Some(4500));
+
+        let off_state = config.off_state.unwrap();
+        assert_eq!(off_state.power, Some(true));
+        assert_eq!(off_state.brightness, Some(80));
+    }
+
+    #[test]
+    fn test_load_invalid_config_on_state_unknown_field() {
+        let config_content = r#"
+on_state:
+  brightness: 250
+  unknown_field: "value"
+"#;
+        let temp_file = create_temp_config(config_content);
+        let result = load_config_file(&temp_file.path().to_path_buf());
+
+        assert!(result.is_err());
+        match result {
+            Err(CliError::ConfigFileError(msg)) => {
+                assert!(msg.contains("unknown field"));
+            }
+            _ => panic!("Expected ConfigFileError with unknown field message"),
+        }
     }
 
     #[test]

@@ -81,6 +81,12 @@ extern "C" {
     fn pthread_main_np() -> c_int;
 }
 
+#[link(name = "objc")]
+extern "C" {
+    fn objc_autoreleasePoolPush() -> *mut c_void;
+    fn objc_autoreleasePoolPop(pool: *mut c_void);
+}
+
 fn devices_address() -> CmioObjectPropertyAddress {
     CmioObjectPropertyAddress {
         selector: K_CMIO_HARDWARE_PROPERTY_DEVICES,
@@ -262,12 +268,35 @@ fn service_main_dispatch_queue() {
     }
 }
 
+/// An Objective-C autorelease pool that is popped when dropped. The main thread
+/// otherwise never pops one, so objects that CoreMediaIO autoreleases while
+/// polling (including those for disconnected cameras) would never be freed.
+struct AutoreleasePool(*mut c_void);
+
+impl AutoreleasePool {
+    fn push() -> Self {
+        // SAFETY: `objc_autoreleasePoolPush` takes no arguments.
+        Self(unsafe { objc_autoreleasePoolPush() })
+    }
+}
+
+impl Drop for AutoreleasePool {
+    fn drop(&mut self) {
+        // SAFETY: `self.0` came from `objc_autoreleasePoolPush` on this thread
+        // (the raw pointer makes this type `!Send`), and the guard only ever
+        // lives in a local, so pools are popped in the reverse order of their
+        // pushes.
+        unsafe { objc_autoreleasePoolPop(self.0) };
+    }
+}
+
 /// Returns whether any camera on the system is currently in use, or `None`
 /// if a CoreMediaIO query failed. Callers should treat `None` as "unknown"
 /// (e.g. keep the previous observed state) rather than as "no camera
 /// running". Call it from the main thread, or cameras connected after startup
 /// may be missed.
 pub fn any_camera_running() -> Option<bool> {
+    let _pool = AutoreleasePool::push();
     service_main_dispatch_queue();
     let device_ids = list_camera_device_ids()?;
     for id in device_ids {

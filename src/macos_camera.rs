@@ -11,9 +11,11 @@
 
 #![cfg(target_os = "macos")]
 
-use std::ffi::c_void;
+use std::ffi::{c_int, c_void};
 use std::mem;
 use std::ptr;
+use std::sync::Once;
+use std::time::{Duration, Instant};
 
 // `CMIOObjectID` is a `UInt32` in CoreMediaIO.
 type CmioObjectId = u32;
@@ -59,6 +61,30 @@ extern "C" {
         data_used: *mut u32,
         data: *mut c_void,
     ) -> i32;
+}
+
+// `CFStringRef` (which `CFRunLoopMode` aliases) is an opaque pointer in
+// CoreFoundation.
+type CfStringRef = *const c_void;
+
+#[link(name = "CoreFoundation", kind = "framework")]
+extern "C" {
+    #[link_name = "kCFRunLoopDefaultMode"]
+    static K_CF_RUN_LOOP_DEFAULT_MODE: CfStringRef;
+
+    fn CFRunLoopRunInMode(mode: CfStringRef, seconds: f64, return_after_source_handled: u8) -> i32;
+}
+
+const K_CF_RUN_LOOP_RUN_HANDLED_SOURCE: i32 = 4;
+
+extern "C" {
+    fn pthread_main_np() -> c_int;
+}
+
+#[link(name = "objc")]
+extern "C" {
+    fn objc_autoreleasePoolPush() -> *mut c_void;
+    fn objc_autoreleasePoolPop(pool: *mut c_void);
 }
 
 fn devices_address() -> CmioObjectPropertyAddress {
@@ -209,11 +235,69 @@ fn is_device_running(device_id: CmioObjectId) -> Option<bool> {
     Some(value != 0)
 }
 
+// How long each poll may run the loop if events keep arriving.
+const RUN_LOOP_BUDGET: Duration = Duration::from_millis(100);
+
+/// Runs the main thread's `CFRunLoop` until nothing is pending, without waiting
+/// for new events. CoreMediaIO updates its camera list on the main dispatch
+/// queue, which this process otherwise never drains.
+fn service_main_dispatch_queue() {
+    // SAFETY: `pthread_main_np` takes no arguments.
+    if unsafe { pthread_main_np() } != 1 {
+        static WARNED: Once = Once::new();
+        WARNED.call_once(|| {
+            log::warn!(
+                "Camera state is being polled off the main thread, so cameras connected \
+                 after startup may not be detected"
+            );
+        });
+        return;
+    }
+
+    let started = Instant::now();
+    // Each pass handles one pending event. hidapi schedules its HID devices on
+    // this run loop too, so during a replug the dispatch queue may not be
+    // serviced until a later pass.
+    while started.elapsed() < RUN_LOOP_BUDGET {
+        // SAFETY: `K_CF_RUN_LOOP_DEFAULT_MODE` is a constant CFString that
+        // CoreFoundation keeps alive for the life of the process.
+        let result = unsafe { CFRunLoopRunInMode(K_CF_RUN_LOOP_DEFAULT_MODE, 0.0, 1) };
+        if result != K_CF_RUN_LOOP_RUN_HANDLED_SOURCE {
+            break;
+        }
+    }
+}
+
+/// An Objective-C autorelease pool that is popped when dropped. The main thread
+/// otherwise never pops one, so objects that CoreMediaIO autoreleases while
+/// polling (including those for disconnected cameras) would never be freed.
+struct AutoreleasePool(*mut c_void);
+
+impl AutoreleasePool {
+    fn push() -> Self {
+        // SAFETY: `objc_autoreleasePoolPush` takes no arguments.
+        Self(unsafe { objc_autoreleasePoolPush() })
+    }
+}
+
+impl Drop for AutoreleasePool {
+    fn drop(&mut self) {
+        // SAFETY: `self.0` came from `objc_autoreleasePoolPush` on this thread
+        // (the raw pointer makes this type `!Send`), and the guard only ever
+        // lives in a local, so pools are popped in the reverse order of their
+        // pushes.
+        unsafe { objc_autoreleasePoolPop(self.0) };
+    }
+}
+
 /// Returns whether any camera on the system is currently in use, or `None`
 /// if a CoreMediaIO query failed. Callers should treat `None` as "unknown"
 /// (e.g. keep the previous observed state) rather than as "no camera
-/// running".
+/// running". Call it from the main thread, or cameras connected after startup
+/// may be missed.
 pub fn any_camera_running() -> Option<bool> {
+    let _pool = AutoreleasePool::push();
+    service_main_dispatch_queue();
     let device_ids = list_camera_device_ids()?;
     for id in device_ids {
         match is_device_running(id) {

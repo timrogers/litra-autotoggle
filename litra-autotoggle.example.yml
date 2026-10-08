@@ -42,3 +42,28 @@
 # the back light by setting the option below to true.
 #
 # back: true
+#
+# By default, the light is turned on when the webcam activates and off when it deactivates,
+# without changing brightness or colour temperature. You can customise this with on_state and
+# off_state blocks.
+#
+# on_state controls what happens when the webcam turns on:
+#   - power: whether to turn the light on (default: true)
+#   - brightness: brightness in lumens to apply (e.g. 250)
+#   - temperature: colour temperature in Kelvin to apply, must be a multiple of 100 (2700–6500)
+#
+# on_state:
+#   power: true
+#   brightness: 250
+#   temperature: 4500
+#
+# off_state controls what happens when the webcam turns off:
+#   - power: keep the light on after the call ends (default: false = turn off)
+#   - brightness: brightness in lumens to apply (only used when power: true)
+#   - temperature: colour temperature in Kelvin to apply (only used when power: true)
+#   Setting brightness or temperature without power: false implies power: true.
+#
+# off_state:
+#   power: true
+#   brightness: 80
+#   temperature: 2700

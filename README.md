@@ -65,6 +65,12 @@ The following arguments are supported:
 - `--delay` to customize the delay (in milliseconds) between a webcam event being detected and toggling your Litra. When your webcam turns on or off, multiple events may be generated in quick succession. Setting a delay allows the program to wait for all events before taking action, avoiding flickering. Defaults to 1.5 seconds (1500 milliseconds).
 - `--verbose` to enable verbose logging
 - `--back` to toggle the back light on Litra Beam LX devices. When enabled, the back light will be turned on/off together with the front light.
+- `--on-power <BOOL>` to control whether the light is turned on when the webcam turns on. Defaults to `true`. Set to `false` to skip turning the light on.
+- `--on-brightness` to set the brightness in lumens when the webcam turns on.
+- `--on-temperature` to set the color temperature in Kelvin when the webcam turns on. Must be a multiple of 100, in the range 2700 to 6500.
+- `--off-power` to keep the light on when the webcam turns off. By default, the light is turned off.
+- `--off-brightness` to set the brightness in lumens when the webcam turns off. Implies `--off-power`.
+- `--off-temperature` to set the color temperature in Kelvin when the webcam turns off. Implies `--off-power`. Must be a multiple of 100, in the range 2700 to 6500.
 
 > [!NOTE]
 > Only one filter (`--serial-number`, `--device-path`, or `--device-type`) can be specified at a time.
@@ -107,6 +113,31 @@ Create a YAML file (e.g., `config.yml`) with your desired options:
 # the back light by setting the option below to true.
 #
 # back: true
+#
+# By default, the light is turned on when the webcam activates and off when it deactivates,
+# without changing brightness or colour temperature. You can customise this with on_state and
+# off_state blocks.
+#
+# on_state controls what happens when the webcam turns on:
+#   - power: whether to turn the light on (default: true)
+#   - brightness: brightness in lumens to apply
+#   - temperature: colour temperature in Kelvin (must be a multiple of 100, 2700 to 6500)
+#
+# on_state:
+#   power: true
+#   brightness: 250
+#   temperature: 4500
+#
+# off_state controls what happens when the webcam turns off:
+#   - power: keep the light on after the call ends (default: false, which turns it off)
+#   - brightness: brightness in lumens (only used when power is true)
+#   - temperature: colour temperature in Kelvin (only used when power is true)
+#   Setting brightness or temperature without power: false implies power: true.
+#
+# off_state:
+#   power: true
+#   brightness: 80
+#   temperature: 2700
 ```
 
 Then run:
@@ -127,6 +158,8 @@ All command-line options can be specified in the configuration file using unders
 - `delay` (number, in milliseconds)
 - `verbose` (boolean)
 - `back` (boolean, toggles the back light on Litra Beam LX devices)
+- `on_state` (block with `power`, `brightness`, `temperature` keys, applied when the webcam turns on)
+- `off_state` (block with `power`, `brightness`, `temperature` keys, applied when the webcam turns off)
 
 **Important notes:**
 
